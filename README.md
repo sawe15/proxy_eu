@@ -46,7 +46,7 @@ sudo bash setup_mtproxy.sh
 Что делает скрипт:
 
 - Создаёт системного пользователя `mtproxy`.
-- Скачивает последнюю версию `mtg` в `/usr/local/bin/mtg` с fallback-именами артефактов (`amd64/x86_64`, `arm64/aarch64`; `.tar.gz`, `.tgz`, или бинарник), чтобы избежать ошибок `404` при изменениях в релизах GitHub.
+- Скачивает `mtg` из конкретного тега релиза `MTG_VERSION` (без использования `releases/latest`) и пытается найти корректный asset автоматически; при необходимости можно задать прямой `MTG_DOWNLOAD_URL`.
 - Генерирует секрет в `/etc/mtproxy-secret`.
 - Создаёт `systemd`-юнит `/etc/systemd/system/mtproxy.service`.
 - Запускает сервис и включает автозапуск.
@@ -58,11 +58,13 @@ sudo bash setup_mtproxy.sh
 - `MTPROXY_BIND_IP` (по умолчанию `0.0.0.0`)
 - `MTPROXY_DOMAIN` (по умолчанию `www.cloudflare.com`)
 - `MTPROXY_AD_TAG` (опционально)
+- `MTG_VERSION` (по умолчанию `v2.1.13`, рекомендуется пиновать)
+- `MTG_DOWNLOAD_URL` (опционально, прямой URL asset для полного ручного контроля загрузки)
 
 Пример:
 
 ```bash
-sudo MTPROXY_PORT=443 MTPROXY_DOMAIN=azure.microsoft.com bash setup_mtproxy.sh
+sudo MTPROXY_PORT=443 MTPROXY_DOMAIN=azure.microsoft.com MTG_VERSION=v2.1.13 bash setup_mtproxy.sh
 ```
 
 ## 3) Проверка

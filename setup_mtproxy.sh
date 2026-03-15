@@ -10,6 +10,8 @@ MTPROXY_PORT="${MTPROXY_PORT:-443}"
 MTPROXY_AD_TAG="${MTPROXY_AD_TAG:-}"
 MTPROXY_DOMAIN="${MTPROXY_DOMAIN:-www.cloudflare.com}"
 MTPROXY_BIND_IP="${MTPROXY_BIND_IP:-0.0.0.0}"
+MTG_VERSION="${MTG_VERSION:-v2.1.13}"
+MTG_DOWNLOAD_URL="${MTG_DOWNLOAD_URL:-}"
 
 if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
   apt-get update
@@ -37,37 +39,89 @@ case "$ARCH" in
     ;;
 esac
 
-fetch_mtg() {
+fetch_file() {
   local url="$1"
   local out="$2"
-  curl -fL --retry 3 --connect-timeout 10 --max-time 120 "$url" -o "$out"
+  curl -fL --retry 3 --connect-timeout 10 --max-time 180 "$url" -o "$out"
 }
 
-MTG_READY=0
-for arch_variant in ${ASSET_ARCH_VARIANTS}; do
-  for filename in "mtg-linux-${arch_variant}.tar.gz" "mtg-linux-${arch_variant}.tgz" "mtg-linux-${arch_variant}"; do
-    URL="https://github.com/9seconds/mtg/releases/latest/download/${filename}"
-    TARGET="$TMPDIR/${filename}"
+install_mtg_artifact() {
+  local artifact_path="$1"
+  if [[ "$artifact_path" == *.tar.gz || "$artifact_path" == *.tgz ]]; then
+    tar -xzf "$artifact_path" -C "$TMPDIR"
+    if [[ -f "$TMPDIR/mtg" ]]; then
+      install -m 0755 "$TMPDIR/mtg" /usr/local/bin/mtg
+      return 0
+    fi
+    local mtg_in_tar
+    mtg_in_tar="$(find "$TMPDIR" -maxdepth 3 -type f -name mtg | head -n 1 || true)"
+    if [[ -n "$mtg_in_tar" ]]; then
+      install -m 0755 "$mtg_in_tar" /usr/local/bin/mtg
+      return 0
+    fi
+    return 1
+  fi
 
-    if fetch_mtg "$URL" "$TARGET" >/dev/null 2>&1; then
-      if [[ "$filename" == *.tar.gz || "$filename" == *.tgz ]]; then
-        tar -xzf "$TARGET" -C "$TMPDIR"
-        if [[ -f "$TMPDIR/mtg" ]]; then
-          install -m 0755 "$TMPDIR/mtg" /usr/local/bin/mtg
-          MTG_READY=1
-          break 2
-        fi
-      else
-        install -m 0755 "$TARGET" /usr/local/bin/mtg
-        MTG_READY=1
+  install -m 0755 "$artifact_path" /usr/local/bin/mtg
+}
+
+find_asset_urls_for_version() {
+  local version="$1"
+  local page
+  page="$(curl -fsSL "https://github.com/9seconds/mtg/releases/tag/${version}")"
+
+  for arch_variant in ${ASSET_ARCH_VARIANTS}; do
+    echo "$page" | rg -o "https://github.com/9seconds/mtg/releases/download/${version}/[^"]*linux[^"]*${arch_variant}[^"]*" || true
+    echo "$page" | rg -o "https://github.com/9seconds/mtg/releases/download/${version}/[^"]*${arch_variant}[^"]*linux[^"]*" || true
+  done | sort -u
+}
+
+MTG_INSTALLED=0
+
+if command -v mtg >/dev/null 2>&1; then
+  if mtg --help >/dev/null 2>&1; then
+    install -m 0755 "$(command -v mtg)" /usr/local/bin/mtg
+    MTG_INSTALLED=1
+  fi
+fi
+
+if [[ "$MTG_INSTALLED" -ne 1 && -n "$MTG_DOWNLOAD_URL" ]]; then
+  TARGET="$TMPDIR/mtg.custom"
+  if fetch_file "$MTG_DOWNLOAD_URL" "$TARGET" >/dev/null 2>&1 && install_mtg_artifact "$TARGET"; then
+    MTG_INSTALLED=1
+  else
+    echo "Failed to download/install mtg from MTG_DOWNLOAD_URL=${MTG_DOWNLOAD_URL}" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$MTG_INSTALLED" -ne 1 ]]; then
+  while IFS= read -r url; do
+    [[ -z "$url" ]] && continue
+    name="$(basename "$url")"
+    target="$TMPDIR/$name"
+    if fetch_file "$url" "$target" >/dev/null 2>&1 && install_mtg_artifact "$target"; then
+      MTG_INSTALLED=1
+      break
+    fi
+  done < <(find_asset_urls_for_version "$MTG_VERSION")
+fi
+
+if [[ "$MTG_INSTALLED" -ne 1 ]]; then
+  for arch_variant in ${ASSET_ARCH_VARIANTS}; do
+    for filename in "mtg-linux-${arch_variant}.tar.gz" "mtg-linux-${arch_variant}.tgz" "mtg-linux-${arch_variant}"; do
+      URL="https://github.com/9seconds/mtg/releases/download/${MTG_VERSION}/${filename}"
+      TARGET="$TMPDIR/${filename}"
+      if fetch_file "$URL" "$TARGET" >/dev/null 2>&1 && install_mtg_artifact "$TARGET"; then
+        MTG_INSTALLED=1
         break 2
       fi
-    fi
+    done
   done
-done
+fi
 
-if [[ "$MTG_READY" -ne 1 ]]; then
-  echo "Failed to download mtg release asset from GitHub. Check network/firewall or install mtg manually to /usr/local/bin/mtg." >&2
+if [[ "$MTG_INSTALLED" -ne 1 ]]; then
+  echo "Failed to install mtg for ${ARCH}. Use MTG_DOWNLOAD_URL with a direct release asset URL or install manually to /usr/local/bin/mtg." >&2
   exit 1
 fi
 
