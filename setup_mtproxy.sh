@@ -11,6 +11,11 @@ MTPROXY_AD_TAG="${MTPROXY_AD_TAG:-}"
 MTPROXY_DOMAIN="${MTPROXY_DOMAIN:-www.cloudflare.com}"
 MTPROXY_BIND_IP="${MTPROXY_BIND_IP:-0.0.0.0}"
 
+if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get -y install curl tar openssl ca-certificates
+fi
+
 if ! id -u mtproxy >/dev/null 2>&1; then
   useradd --system --home /var/lib/mtproxy --create-home --shell /usr/sbin/nologin mtproxy
 fi
@@ -20,17 +25,51 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 ARCH="$(dpkg --print-architecture)"
 case "$ARCH" in
-  amd64) MTG_ARCH="amd64" ;;
-  arm64) MTG_ARCH="arm64" ;;
+  amd64)
+    ASSET_ARCH_VARIANTS="amd64 x86_64"
+    ;;
+  arm64)
+    ASSET_ARCH_VARIANTS="arm64 aarch64"
+    ;;
   *)
     echo "Unsupported architecture: ${ARCH}" >&2
     exit 1
     ;;
 esac
 
-curl -fsSL "https://github.com/9seconds/mtg/releases/latest/download/mtg-linux-${MTG_ARCH}.tar.gz" -o "$TMPDIR/mtg.tgz"
-tar -xzf "$TMPDIR/mtg.tgz" -C "$TMPDIR"
-install -m 0755 "$TMPDIR/mtg" /usr/local/bin/mtg
+fetch_mtg() {
+  local url="$1"
+  local out="$2"
+  curl -fL --retry 3 --connect-timeout 10 --max-time 120 "$url" -o "$out"
+}
+
+MTG_READY=0
+for arch_variant in ${ASSET_ARCH_VARIANTS}; do
+  for filename in "mtg-linux-${arch_variant}.tar.gz" "mtg-linux-${arch_variant}.tgz" "mtg-linux-${arch_variant}"; do
+    URL="https://github.com/9seconds/mtg/releases/latest/download/${filename}"
+    TARGET="$TMPDIR/${filename}"
+
+    if fetch_mtg "$URL" "$TARGET" >/dev/null 2>&1; then
+      if [[ "$filename" == *.tar.gz || "$filename" == *.tgz ]]; then
+        tar -xzf "$TARGET" -C "$TMPDIR"
+        if [[ -f "$TMPDIR/mtg" ]]; then
+          install -m 0755 "$TMPDIR/mtg" /usr/local/bin/mtg
+          MTG_READY=1
+          break 2
+        fi
+      else
+        install -m 0755 "$TARGET" /usr/local/bin/mtg
+        MTG_READY=1
+        break 2
+      fi
+    fi
+  done
+done
+
+if [[ "$MTG_READY" -ne 1 ]]; then
+  echo "Failed to download mtg release asset from GitHub. Check network/firewall or install mtg manually to /usr/local/bin/mtg." >&2
+  exit 1
+fi
 
 SECRET_FILE="/etc/mtproxy-secret"
 if [[ ! -f "$SECRET_FILE" ]]; then

@@ -46,7 +46,7 @@ sudo bash setup_mtproxy.sh
 Что делает скрипт:
 
 - Создаёт системного пользователя `mtproxy`.
-- Скачивает последнюю версию `mtg` (`amd64`/`arm64`) в `/usr/local/bin/mtg`.
+- Скачивает последнюю версию `mtg` в `/usr/local/bin/mtg` с fallback-именами артефактов (`amd64/x86_64`, `arm64/aarch64`; `.tar.gz`, `.tgz`, или бинарник), чтобы избежать ошибок `404` при изменениях в релизах GitHub.
 - Генерирует секрет в `/etc/mtproxy-secret`.
 - Создаёт `systemd`-юнит `/etc/systemd/system/mtproxy.service`.
 - Запускает сервис и включает автозапуск.
