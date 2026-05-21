@@ -128,7 +128,7 @@ MaxAuthTries 3
 LoginGraceTime 30
 ClientAliveInterval 300
 ClientAliveCountMax 2
-AllowAgentForwarding no
+AllowAgentForwarding yes
 # local port-forwarding is required for Grafana SSH tunnel (ssh -L 3000:localhost:3000)
 AllowTcpForwarding local
 X11Forwarding no
