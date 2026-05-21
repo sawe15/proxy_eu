@@ -372,8 +372,7 @@ if ! dpkg -l grafana &>/dev/null 2>&1; then
   GRAFANA_URL="https://dl.grafana.com/oss/release/${GRAFANA_DEB}"
   info "Downloading $GRAFANA_DEB..."
   curl -fsSL --retry 3 -o "$TMPDIR/$GRAFANA_DEB" "$GRAFANA_URL"
-  dpkg -i "$TMPDIR/$GRAFANA_DEB"
-  apt-get install -f -y -qq
+  apt-get install -y -qq "$TMPDIR/$GRAFANA_DEB"
 else
   info "Grafana already installed"
 fi

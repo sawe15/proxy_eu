@@ -132,9 +132,13 @@ PROXY_MONITORING_TG_CHAT_ID=""
 EOF
 
 chmod 600 "$CONF_FILE"
+# give ownership to the invoking user so they can edit without sudo
+if [[ -n "${SUDO_USER:-}" ]]; then
+  chown "$SUDO_USER" "$CONF_FILE"
+fi
 
 echo ""
-info "proxy.conf written to $CONF_FILE (mode 600)"
+info "proxy.conf written to $CONF_FILE (mode 600, owner: ${SUDO_USER:-root})"
 echo ""
 warn "Before running 05-monitoring.sh, edit proxy.conf and set:"
 warn "  PROXY_MONITORING_TG_BOT_TOKEN — from @BotFather"
