@@ -367,7 +367,8 @@ systemctl enable --now alertmanager
 # ── Grafana ───────────────────────────────────────────────────────────────────
 header "Installing Grafana v${GRAFANA_VERSION}"
 
-if ! dpkg -l grafana &>/dev/null 2>&1; then
+apt-get install -f -y -qq   # fix any broken packages from prior runs
+if ! dpkg -l grafana 2>/dev/null | grep -q '^ii'; then
   GRAFANA_DEB="grafana_${GRAFANA_VERSION}_${DL_ARCH}.deb"
   GRAFANA_URL="https://dl.grafana.com/oss/release/${GRAFANA_DEB}"
   info "Downloading $GRAFANA_DEB..."

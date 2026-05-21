@@ -151,6 +151,7 @@ info "SSH hardened and restarted"
 # ── fail2ban ──────────────────────────────────────────────────────────────────
 header "Installing and configuring fail2ban"
 
+apt-get install -f -y -qq   # fix any broken packages from prior runs
 apt-get install -y -qq fail2ban
 
 cat > /etc/fail2ban/jail.local <<'F2B_EOF'
