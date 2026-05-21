@@ -21,6 +21,7 @@ source "$CONF_FILE"
 
 XRAY_VERSION="1.8.24"
 XRAY_INSTALL_DIR="/usr/local/bin"
+XRAY_SHARE_DIR="/usr/local/share/xray"
 XRAY_CONFIG_DIR="/etc/xray"
 XRAY_LOG_DIR="/var/log/xray"
 
@@ -42,10 +43,11 @@ info "Downloading $XRAY_ARCHIVE..."
 curl -fsSL --retry 3 -o "$TMPDIR/xray.zip" "$XRAY_URL"
 unzip -q "$TMPDIR/xray.zip" -d "$TMPDIR/xray-extract/"
 
-install -m 755 "$TMPDIR/xray-extract/xray"          "$XRAY_INSTALL_DIR/xray"
-install -m 755 "$TMPDIR/xray-extract/geoip.dat"     /usr/local/share/xray/geoip.dat 2>/dev/null || \
-  install -D -m 644 "$TMPDIR/xray-extract/geoip.dat" /usr/local/share/xray/geoip.dat
-install -D -m 644 "$TMPDIR/xray-extract/geosite.dat" /usr/local/share/xray/geosite.dat 2>/dev/null || true
+install -m 755 "$TMPDIR/xray-extract/xray" "$XRAY_INSTALL_DIR/xray"
+
+mkdir -p "$XRAY_SHARE_DIR"
+[[ -f "$TMPDIR/xray-extract/geoip.dat"   ]] && install -m 644 "$TMPDIR/xray-extract/geoip.dat"   "$XRAY_SHARE_DIR/geoip.dat"
+[[ -f "$TMPDIR/xray-extract/geosite.dat" ]] && install -m 644 "$TMPDIR/xray-extract/geosite.dat" "$XRAY_SHARE_DIR/geosite.dat"
 
 info "xray installed: $("$XRAY_INSTALL_DIR/xray" version | head -1)"
 
@@ -110,7 +112,7 @@ cat > "$XRAY_CONFIG_DIR/config.json" <<XRAY_EOF
         }
       },
       "sniffing": {
-        "enabled":     true,
+        "enabled":      true,
         "destOverride": ["http", "tls", "quic"]
       }
     }
@@ -123,13 +125,13 @@ cat > "$XRAY_CONFIG_DIR/config.json" <<XRAY_EOF
     "domainStrategy": "IPIfNonMatch",
     "rules": [
       {
-        "type":       "field",
-        "inboundTag": ["api"],
+        "type":        "field",
+        "inboundTag":  ["api"],
         "outboundTag": "api"
       },
       {
-        "type":    "field",
-        "ip":      ["geoip:private"],
+        "type":        "field",
+        "ip":          ["geoip:private"],
         "outboundTag": "block"
       }
     ]

@@ -1,0 +1,23 @@
+# Standalone proxy configuration — EXAMPLE ONLY
+# Run ./01-secrets.sh to generate this file automatically.
+# chmod 600 proxy.conf; never commit it to git.
+
+# ── VLESS / xray ───────────────────────────────────────────────────────────────
+PROXY_VLESS_UUID=""
+PROXY_XRAY_PRIVATE_KEY=""
+PROXY_XRAY_PUBLIC_KEY=""
+PROXY_XRAY_SHORT_ID=""
+PROXY_XRAY_PORT=443
+PROXY_XRAY_SNI="www.cloudflare.com"
+PROXY_XRAY_DEST="www.cloudflare.com:443"
+PROXY_XRAY_FLOW="xtls-rprx-vision"
+
+# ── MTProxy ────────────────────────────────────────────────────────────────────
+PROXY_MTG_SECRET=""
+PROXY_MTG_PORT=15001
+
+# ── Monitoring ─────────────────────────────────────────────────────────────────
+PROXY_MONITORING_GRAFANA_PASSWORD=""
+# Get token from @BotFather, chat ID from @userinfobot or similar
+PROXY_MONITORING_TG_BOT_TOKEN=""
+PROXY_MONITORING_TG_CHAT_ID=""

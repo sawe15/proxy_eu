@@ -16,17 +16,10 @@ header() { echo -e "\n${BOLD}==> $*${NC}"; }
 # ── safety: confirm SSH key is present ────────────────────────────────────────
 header "SSH key safety check"
 
-AUTHORIZED_KEYS_FILES=(
-  /root/.ssh/authorized_keys
-  /home/*/.ssh/authorized_keys
-)
 KEY_FOUND=0
-for f in "${AUTHORIZED_KEYS_FILES[@]}"; do
-  # shellcheck disable=SC2086
-  for actual in $f; do
-    [[ -f "$actual" ]] && grep -qE "^(ssh-|ecdsa-|sk-)" "$actual" 2>/dev/null \
-      && { info "SSH key found in $actual"; KEY_FOUND=1; break 2; }
-  done
+for f in /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys; do
+  [[ -f "$f" ]] && grep -qE "^(ssh-|ecdsa-|sk-)" "$f" 2>/dev/null \
+    && { info "SSH key found in $f"; KEY_FOUND=1; break; }
 done
 
 [[ $KEY_FOUND -eq 1 ]] \
@@ -36,7 +29,7 @@ done
 header "Disabling unnecessary services"
 
 for svc in rpcbind avahi-daemon cups bluetooth; do
-  if systemctl list-unit-files "${svc}.service" &>/dev/null 2>&1 | grep -q "${svc}"; then
+  if systemctl list-unit-files "${svc}.service" 2>/dev/null | grep -q "${svc}"; then
     systemctl disable --now "$svc" 2>/dev/null && info "Disabled: $svc" || true
   fi
 done
@@ -51,12 +44,26 @@ net.ipv4.conf.default.rp_filter = 1
 
 # No ICMP redirects
 net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
 net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.default.secure_redirects = 0
 
 # No source routing
 net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
 net.ipv6.conf.all.accept_source_route = 0
+net.ipv6.conf.default.accept_source_route = 0
+
+# No IPv6 router advertisements
+net.ipv6.conf.all.accept_ra = 0
+net.ipv6.conf.default.accept_ra = 0
+
+# Ignore broadcast pings
+net.ipv4.icmp_echo_ignore_broadcasts = 1
 
 # SYN flood protection
 net.ipv4.tcp_syncookies = 1
@@ -65,10 +72,12 @@ net.ipv4.tcp_synack_retries = 2
 
 # Log martian packets
 net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
 
 # No IP forwarding (standalone proxy, userspace-only)
 net.ipv4.ip_forward = 0
 net.ipv6.conf.all.forwarding = 0
+net.ipv6.conf.default.forwarding = 0
 
 # ASLR
 kernel.randomize_va_space = 2
@@ -76,12 +85,20 @@ kernel.randomize_va_space = 2
 # Restrict core dumps
 fs.suid_dumpable = 0
 
+# Protect hardlinks and symlinks
+fs.protected_hardlinks = 1
+fs.protected_symlinks = 1
+
 # Restrict /proc visibility
 kernel.dmesg_restrict = 1
 kernel.kptr_restrict = 2
 
+# Restrict ptrace to child processes only
+kernel.yama.ptrace_scope = 1
+
 # Increase connection limits for proxy workloads
 net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
 net.ipv4.tcp_tw_reuse = 1
 SYSCTL_EOF
 
@@ -98,7 +115,6 @@ header "Hardening SSH"
 
 mkdir -p /etc/ssh/sshd_config.d
 
-# add Include directive if not present
 if ! grep -qE "^Include /etc/ssh/sshd_config.d" /etc/ssh/sshd_config 2>/dev/null; then
   echo "Include /etc/ssh/sshd_config.d/*.conf" >> /etc/ssh/sshd_config
 fi
@@ -113,13 +129,13 @@ LoginGraceTime 30
 ClientAliveInterval 300
 ClientAliveCountMax 2
 AllowAgentForwarding no
-AllowTcpForwarding no
+# local port-forwarding is required for Grafana SSH tunnel (ssh -L 3000:localhost:3000)
+AllowTcpForwarding local
 X11Forwarding no
 PrintMotd no
 Banner /etc/issue.net
 SSH_EOF
 
-# validate before restart
 sshd -t || error "sshd config validation failed — check /etc/ssh/sshd_config.d/99-hardening.conf"
 
 cat > /etc/issue.net <<'BANNER_EOF'
@@ -164,7 +180,7 @@ APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 APT_EOF
 
-DISTRO_CODENAME=$(lsb_release -cs 2>/dev/null || . /etc/os-release && echo "$VERSION_CODENAME")
+DISTRO_CODENAME=$(lsb_release -cs 2>/dev/null || (. /etc/os-release && echo "$VERSION_CODENAME"))
 
 cat > /etc/apt/apt.conf.d/50unattended-upgrades <<UNATT_EOF
 Unattended-Upgrade::Allowed-Origins {
@@ -188,9 +204,9 @@ fi
 # ── secure file permissions ───────────────────────────────────────────────────
 header "Setting secure file permissions"
 
-chmod 600 /etc/crontab        2>/dev/null || true
+chmod 600 /etc/crontab         2>/dev/null || true
 chmod 600 /etc/ssh/sshd_config 2>/dev/null || true
-chmod 700 /root               2>/dev/null || true
+chmod 700 /root                2>/dev/null || true
 
 # ── ufw baseline ──────────────────────────────────────────────────────────────
 header "Configuring UFW baseline"
@@ -199,7 +215,6 @@ if ! command -v ufw &>/dev/null; then
   apt-get install -y -qq ufw
 fi
 
-# SSH must be allowed BEFORE enabling firewall
 ufw allow 22/tcp comment "SSH" > /dev/null
 ufw --force enable > /dev/null
 info "UFW enabled. SSH (22/tcp) allowed."
@@ -209,8 +224,8 @@ warn "Ports 443 and 15001 are opened by 02-xray.sh and 03-mtproxy.sh respectivel
 header "Hardening complete"
 echo ""
 info "Summary of changes:"
-echo "  - sysctl: IP spoofing, ICMP, SYN flood, ASLR hardening"
-echo "  - SSH:    key-only auth, no root, MaxAuthTries=3"
+echo "  - sysctl: IP spoofing, ICMP, SYN flood, ASLR, ptrace, hardlink/symlink hardening"
+echo "  - SSH:    key-only auth, no root, MaxAuthTries=3, local TCP forwarding only"
 echo "  - fail2ban: SSH jail, ban 1h after 5 failed attempts"
 echo "  - Auto-upgrades: security packages only, no auto-reboot"
 echo "  - UFW: default-deny, SSH allowed"

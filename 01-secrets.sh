@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Generates all secrets for a standalone proxy and writes proxy.conf
+# Generates all secrets for a standalone proxy and writes proxy.conf.
 # Run once on the machine that will host the proxy (or locally).
 # Requires: curl, unzip, openssl
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF_FILE="$SCRIPT_DIR/proxy.conf"
+GITIGNORE="$SCRIPT_DIR/.gitignore"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
 info()    { echo -e "${GREEN}[INFO]${NC}  $*"; }
@@ -18,9 +19,50 @@ for cmd in curl unzip openssl; do
   command -v "$cmd" &>/dev/null || error "Required command not found: $cmd"
 done
 
+# ensure proxy.conf is gitignored before we write it
+if [[ -f "$GITIGNORE" ]]; then
+  grep -qxF "proxy.conf" "$GITIGNORE" || echo "proxy.conf" >> "$GITIGNORE"
+else
+  echo "proxy.conf" > "$GITIGNORE"
+fi
+
+# ── validate existing secrets ──────────────────────────────────────────────────
+# Returns true if the value matches the given regex
+valid() { [[ "${1:-}" =~ $2 ]]; }
+
+UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+B64_RE='^[A-Za-z0-9+/=_-]{40,}$'   # X25519 keys are ~43 base64url chars
+HEX8_RE='^[0-9a-f]{16}$'           # SHORT_ID: 8 bytes = 16 hex chars
+MTG_RE='^ee[0-9a-f]{32}$'          # ee + 16 bytes = 34 chars total
+PASS_RE='^.{8,}$'
+
 if [[ -f "$CONF_FILE" ]]; then
-  warn "proxy.conf already exists at $CONF_FILE"
-  read -r -p "Overwrite? [y/N] " REPLY
+  # shellcheck source=proxy.conf
+  source "$CONF_FILE"
+
+  INVALID=()
+  valid "${PROXY_VLESS_UUID:-}"             "$UUID_RE" || INVALID+=("PROXY_VLESS_UUID")
+  valid "${PROXY_XRAY_PRIVATE_KEY:-}"       "$B64_RE"  || INVALID+=("PROXY_XRAY_PRIVATE_KEY")
+  valid "${PROXY_XRAY_PUBLIC_KEY:-}"        "$B64_RE"  || INVALID+=("PROXY_XRAY_PUBLIC_KEY")
+  valid "${PROXY_XRAY_SHORT_ID:-}"          "$HEX8_RE" || INVALID+=("PROXY_XRAY_SHORT_ID")
+  valid "${PROXY_MTG_SECRET:-}"             "$MTG_RE"  || INVALID+=("PROXY_MTG_SECRET")
+  valid "${PROXY_MONITORING_GRAFANA_PASSWORD:-}" "$PASS_RE" || INVALID+=("PROXY_MONITORING_GRAFANA_PASSWORD")
+
+  if [[ ${#INVALID[@]} -eq 0 ]]; then
+    info "proxy.conf exists and all secrets are valid — nothing to do."
+    info "  UUID:        ${PROXY_VLESS_UUID}"
+    info "  Public key:  ${PROXY_XRAY_PUBLIC_KEY}"
+    info "  Short ID:    ${PROXY_XRAY_SHORT_ID}"
+    info "  MTG secret:  ${PROXY_MTG_SECRET}"
+    exit 0
+  fi
+
+  warn "proxy.conf exists but the following secrets are missing or invalid:"
+  for field in "${INVALID[@]}"; do
+    warn "  - $field"
+  done
+  echo ""
+  read -r -p "Regenerate all secrets? [y/N] " REPLY
   [[ "${REPLY,,}" == "y" ]] || { info "Aborted."; exit 0; }
 fi
 
@@ -92,7 +134,7 @@ EOF
 chmod 600 "$CONF_FILE"
 
 echo ""
-info "proxy.conf written to $CONF_FILE"
+info "proxy.conf written to $CONF_FILE (mode 600)"
 echo ""
 warn "Before running 05-monitoring.sh, edit proxy.conf and set:"
 warn "  PROXY_MONITORING_TG_BOT_TOKEN — from @BotFather"

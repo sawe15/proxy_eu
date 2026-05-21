@@ -10,9 +10,11 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\
 info()   { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()   { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()  { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
-header() { echo -e "\n${BOLD}╔══════════════════════════════════════════╗"; \
-           printf "${BOLD}║  %-42s║${NC}\n" "$*"; \
-           echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"; }
+header() {
+  echo -e "\n${BOLD}╔══════════════════════════════════════════════╗"
+  printf "${BOLD}║  %-44s║${NC}\n" "$*"
+  echo -e "${BOLD}╚══════════════════════════════════════════════╝${NC}"
+}
 
 [[ $EUID -eq 0 ]] || error "Run as root: sudo $0"
 
@@ -41,7 +43,6 @@ bash "$SCRIPT_DIR/04-harden.sh"
 header "Step 5 / 5 — Deploy monitoring stack"
 
 CONF_FILE="$SCRIPT_DIR/proxy.conf"
-# shellcheck source=proxy.conf
 [[ -f "$CONF_FILE" ]] && source "$CONF_FILE"
 
 if [[ -z "${PROXY_MONITORING_TG_BOT_TOKEN:-}" ]]; then
@@ -54,15 +55,15 @@ fi
 bash "$SCRIPT_DIR/05-monitoring.sh"
 
 # ── summary ────────────────────────────────────────────────────────────────────
-echo ""
-echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BOLD}  Installation complete${NC}"
-echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
 [[ -f "$CONF_FILE" ]] && source "$CONF_FILE"
 SERVER_IP=$(curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
   || hostname -I | awk '{print $1}')
 
+echo ""
+echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BOLD}  Installation complete${NC}"
+echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
 echo -e "${BOLD}VLESS connection:${NC}"
 echo "  Address:    $SERVER_IP"
 echo "  Port:       ${PROXY_XRAY_PORT:-443}"
@@ -80,4 +81,4 @@ echo -e "${BOLD}Grafana:${NC}"
 echo "  ssh -L 3000:localhost:3000 user@${SERVER_IP}"
 echo "  → http://localhost:3000  (admin / ${PROXY_MONITORING_GRAFANA_PASSWORD:-<see proxy.conf>})"
 echo ""
-info "All secrets are in proxy.conf — keep it safe."
+info "All secrets are in proxy.conf — keep it safe, never commit it."
