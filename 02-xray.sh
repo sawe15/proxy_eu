@@ -49,6 +49,17 @@ mkdir -p "$XRAY_SHARE_DIR"
 [[ -f "$TMPDIR/xray-extract/geoip.dat"   ]] && install -m 644 "$TMPDIR/xray-extract/geoip.dat"   "$XRAY_SHARE_DIR/geoip.dat"
 [[ -f "$TMPDIR/xray-extract/geosite.dat" ]] && install -m 644 "$TMPDIR/xray-extract/geosite.dat" "$XRAY_SHARE_DIR/geosite.dat"
 
+# Grant CAP_NET_BIND_SERVICE so xray can bind port 443 as User=nobody.
+# setcap is more reliable than ambient capabilities in all systemd versions.
+if command -v setcap &>/dev/null; then
+  setcap cap_net_bind_service=+ep "$XRAY_INSTALL_DIR/xray"
+  info "setcap: cap_net_bind_service granted to xray binary"
+else
+  apt-get install -y -qq libcap2-bin
+  setcap cap_net_bind_service=+ep "$XRAY_INSTALL_DIR/xray"
+  info "setcap: cap_net_bind_service granted to xray binary"
+fi
+
 info "xray installed: $("$XRAY_INSTALL_DIR/xray" version | head -1)"
 
 # ── directories ────────────────────────────────────────────────────────────────
@@ -126,11 +137,6 @@ cat > "$XRAY_CONFIG_DIR/config.json" <<XRAY_EOF
     "rules": [
       {
         "type":        "field",
-        "inboundTag":  ["api"],
-        "outboundTag": "api"
-      },
-      {
-        "type":        "field",
         "ip":          ["geoip:private"],
         "outboundTag": "block"
       }
@@ -159,8 +165,8 @@ After=network.target nss-lookup.target
 [Service]
 User=nobody
 Group=nogroup
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+# CAP_NET_BIND_SERVICE is granted via setcap on the binary; no ambient caps needed.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
 Restart=on-failure
@@ -174,6 +180,16 @@ SVC_EOF
 systemctl daemon-reload
 systemctl enable --now xray
 
+# Give xray a moment to start (or fail), then report the real state.
+sleep 2
+if systemctl is-active --quiet xray; then
+  info "xray is running"
+else
+  warn "xray is NOT running — last journal lines:"
+  journalctl -u xray -n 20 --no-pager 2>/dev/null || true
+  warn "Run: sudo journalctl -u xray -n 40 --no-pager"
+fi
+
 # ── firewall ───────────────────────────────────────────────────────────────────
 header "Configuring firewall"
 
@@ -186,7 +202,7 @@ fi
 
 # ── status ─────────────────────────────────────────────────────────────────────
 header "Done"
-systemctl is-active --quiet xray && info "xray is running" || warn "xray is NOT running (check: journalctl -u xray)"
+systemctl is-active --quiet xray && info "xray is running" || warn "xray is NOT running — check: sudo journalctl -u xray -n 40 --no-pager"
 
 echo ""
 info "Client connection details:"
