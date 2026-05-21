@@ -53,6 +53,11 @@ else
 
   systemctl enable --now docker
   info "Docker installed: $(docker --version)"
+
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    usermod -aG docker "$SUDO_USER"
+    info "Added $SUDO_USER to docker group (re-login or run: newgrp docker)"
+  fi
 fi
 
 systemctl is-active --quiet docker || { systemctl start docker; sleep 2; }
