@@ -26,9 +26,43 @@ else
   echo "proxy.conf" > "$GITIGNORE"
 fi
 
+# ── validate existing secrets ──────────────────────────────────────────────────
+# Returns true if the value matches the given regex
+valid() { [[ "${1:-}" =~ $2 ]]; }
+
+UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+B64_RE='^[A-Za-z0-9+/=_-]{40,}$'   # X25519 keys are ~43 base64url chars
+HEX8_RE='^[0-9a-f]{16}$'           # SHORT_ID: 8 bytes = 16 hex chars
+MTG_RE='^ee[0-9a-f]{32}$'          # ee + 16 bytes = 34 chars total
+PASS_RE='^.{8,}$'
+
 if [[ -f "$CONF_FILE" ]]; then
-  warn "proxy.conf already exists at $CONF_FILE"
-  read -r -p "Overwrite? [y/N] " REPLY
+  # shellcheck source=proxy.conf
+  source "$CONF_FILE"
+
+  INVALID=()
+  valid "${PROXY_VLESS_UUID:-}"             "$UUID_RE" || INVALID+=("PROXY_VLESS_UUID")
+  valid "${PROXY_XRAY_PRIVATE_KEY:-}"       "$B64_RE"  || INVALID+=("PROXY_XRAY_PRIVATE_KEY")
+  valid "${PROXY_XRAY_PUBLIC_KEY:-}"        "$B64_RE"  || INVALID+=("PROXY_XRAY_PUBLIC_KEY")
+  valid "${PROXY_XRAY_SHORT_ID:-}"          "$HEX8_RE" || INVALID+=("PROXY_XRAY_SHORT_ID")
+  valid "${PROXY_MTG_SECRET:-}"             "$MTG_RE"  || INVALID+=("PROXY_MTG_SECRET")
+  valid "${PROXY_MONITORING_GRAFANA_PASSWORD:-}" "$PASS_RE" || INVALID+=("PROXY_MONITORING_GRAFANA_PASSWORD")
+
+  if [[ ${#INVALID[@]} -eq 0 ]]; then
+    info "proxy.conf exists and all secrets are valid — nothing to do."
+    info "  UUID:        ${PROXY_VLESS_UUID}"
+    info "  Public key:  ${PROXY_XRAY_PUBLIC_KEY}"
+    info "  Short ID:    ${PROXY_XRAY_SHORT_ID}"
+    info "  MTG secret:  ${PROXY_MTG_SECRET}"
+    exit 0
+  fi
+
+  warn "proxy.conf exists but the following secrets are missing or invalid:"
+  for field in "${INVALID[@]}"; do
+    warn "  - $field"
+  done
+  echo ""
+  read -r -p "Regenerate all secrets? [y/N] " REPLY
   [[ "${REPLY,,}" == "y" ]] || { info "Aborted."; exit 0; }
 fi
 
