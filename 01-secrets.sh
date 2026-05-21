@@ -33,7 +33,7 @@ valid() { [[ "${1:-}" =~ $2 ]]; }
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 B64_RE='^[A-Za-z0-9+/=_-]{40,}$'   # X25519 keys are ~43 base64url chars
 HEX8_RE='^[0-9a-f]{16}$'           # SHORT_ID: 8 bytes = 16 hex chars
-MTG_RE='^ee[0-9a-f]{32}$'          # ee + 16 bytes = 34 chars total
+MTG_RE='^ee[0-9a-f]{36,}$'         # ee + hex(hostname, min 1 char) + 16 random bytes
 PASS_RE='^.{8,}$'
 
 if [[ -f "$CONF_FILE" ]]; then
@@ -95,13 +95,17 @@ PUBLIC_KEY=$(echo "$KEYPAIR"  | awk '/Public key/{print $NF}')
 
 VLESS_UUID=$(cat /proc/sys/kernel/random/uuid)
 SHORT_ID=$(openssl rand -hex 8)
-MTG_SECRET="ee$(openssl rand -hex 16)"
+# mtg v2 ee-secret format: 0xEE + hex(hostname) + 16 random bytes
+# the hostname is embedded so mtg can present it as fake-TLS SNI
+MTG_SNI="www.cloudflare.com"
+MTG_SNI_HEX=$(printf '%s' "$MTG_SNI" | od -An -tx1 | tr -d ' \n')
+MTG_SECRET="ee${MTG_SNI_HEX}$(openssl rand -hex 16)"
 GRAFANA_PASS=$(openssl rand -base64 18 | tr -d '/+=\n' | head -c 20)
 
 info "UUID:        $VLESS_UUID"
 info "Public key:  $PUBLIC_KEY"
 info "Short ID:    $SHORT_ID"
-info "MTG secret:  $MTG_SECRET"
+info "MTG secret:  $MTG_SECRET (SNI: $MTG_SNI)"
 
 # ── write proxy.conf ────────────────────────────────────────────────────────────
 header "Writing proxy.conf"
@@ -122,6 +126,7 @@ PROXY_XRAY_FLOW="xtls-rprx-vision"
 
 # ── MTProxy ────────────────────────────────────────────────────────────────────
 PROXY_MTG_SECRET="${MTG_SECRET}"
+PROXY_MTG_SNI="${MTG_SNI}"
 PROXY_MTG_PORT=15001
 
 # ── Monitoring ─────────────────────────────────────────────────────────────────
