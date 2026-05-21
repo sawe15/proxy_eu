@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Generates all secrets for a standalone proxy and writes proxy.conf
+# Generates all secrets for a standalone proxy and writes proxy.conf.
 # Run once on the machine that will host the proxy (or locally).
 # Requires: curl, unzip, openssl
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF_FILE="$SCRIPT_DIR/proxy.conf"
+GITIGNORE="$SCRIPT_DIR/.gitignore"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
 info()    { echo -e "${GREEN}[INFO]${NC}  $*"; }
@@ -17,6 +18,13 @@ header()  { echo -e "\n${BOLD}==> $*${NC}"; }
 for cmd in curl unzip openssl; do
   command -v "$cmd" &>/dev/null || error "Required command not found: $cmd"
 done
+
+# ensure proxy.conf is gitignored before we write it
+if [[ -f "$GITIGNORE" ]]; then
+  grep -qxF "proxy.conf" "$GITIGNORE" || echo "proxy.conf" >> "$GITIGNORE"
+else
+  echo "proxy.conf" > "$GITIGNORE"
+fi
 
 if [[ -f "$CONF_FILE" ]]; then
   warn "proxy.conf already exists at $CONF_FILE"
@@ -92,7 +100,7 @@ EOF
 chmod 600 "$CONF_FILE"
 
 echo ""
-info "proxy.conf written to $CONF_FILE"
+info "proxy.conf written to $CONF_FILE (mode 600)"
 echo ""
 warn "Before running 05-monitoring.sh, edit proxy.conf and set:"
 warn "  PROXY_MONITORING_TG_BOT_TOKEN — from @BotFather"

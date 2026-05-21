@@ -55,13 +55,11 @@ else
   info "Docker installed: $(docker --version)"
 fi
 
-# ensure docker is running
 systemctl is-active --quiet docker || { systemctl start docker; sleep 2; }
 
 # ── deploy mtg container ───────────────────────────────────────────────────────
 header "Deploying mtg container"
 
-# stop & remove if exists (config may have changed)
 if docker inspect "$MTG_CONTAINER" &>/dev/null; then
   RUNNING_SECRET=$(docker inspect "$MTG_CONTAINER" \
     --format '{{range .Args}}{{.}} {{end}}' 2>/dev/null | grep -oE 'ee[0-9a-f]+' || true)

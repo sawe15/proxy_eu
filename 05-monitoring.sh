@@ -222,7 +222,7 @@ groups:
           summary: "High memory on {{ $labels.instance }}: {{ $value | printf \"%.0f\" }}%"
 
       - alert: DiskAlmostFull
-        expr: 100 * (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 85
+        expr: 100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!="rootfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!="rootfs"}) > 85
         for: 5m
         labels:
           severity: critical
@@ -338,7 +338,7 @@ receivers:
           <b>[{{ .Status | toUpper }}]</b> {{ .Labels.alertname }}
           Severity: {{ .Labels.severity }}
           {{ .Annotations.summary }}
-          {{ end }}
+          {{ end -}}
 AM_EOF
 
 chmod 600 "$MONITORING_CONFIG_DIR/alertmanager.yaml"
@@ -367,7 +367,7 @@ systemctl enable --now alertmanager
 # ── Grafana ───────────────────────────────────────────────────────────────────
 header "Installing Grafana v${GRAFANA_VERSION}"
 
-if ! dpkg -l grafana &>/dev/null; then
+if ! dpkg -l grafana &>/dev/null 2>&1; then
   GRAFANA_DEB="grafana_${GRAFANA_VERSION}_${DL_ARCH}.deb"
   GRAFANA_URL="https://dl.grafana.com/oss/release/${GRAFANA_DEB}"
   info "Downloading $GRAFANA_DEB..."
@@ -390,6 +390,7 @@ domain    = localhost
 admin_user     = admin
 admin_password = ${GRAFANA_PASS}
 disable_gravatar = true
+cookie_secure = false
 
 [users]
 allow_sign_up = false
@@ -398,8 +399,8 @@ allow_sign_up = false
 enabled = false
 
 [analytics]
-reporting_enabled    = false
-check_for_updates    = false
+reporting_enabled        = false
+check_for_updates        = false
 check_for_plugin_updates = false
 
 [log]
@@ -407,12 +408,13 @@ mode  = console
 level = warn
 GRAFANA_INI
 
-# datasource provisioning
+# datasource provisioning — fixed uid so dashboard panels can reference it
 mkdir -p /etc/grafana/provisioning/datasources
 cat > /etc/grafana/provisioning/datasources/victoriametrics.yaml <<DS_EOF
 apiVersion: 1
 datasources:
   - name: VictoriaMetrics
+    uid: victoriametrics
     type: prometheus
     access: proxy
     url: http://127.0.0.1:${PORT_VM}
@@ -436,79 +438,378 @@ PROV_EOF
 cat > "$GRAFANA_DASHBOARD_DIR/proxy-overview.json" <<'DASH_EOF'
 {
   "title": "Proxy Overview",
-  "uid":   "proxy-standalone",
+  "uid": "proxy-standalone",
   "schemaVersion": 38,
   "refresh": "30s",
   "time": {"from": "now-3h", "to": "now"},
   "panels": [
     {
-      "id": 1, "gridPos": {"h": 4, "w": 4, "x": 0,  "y": 0},
-      "title": "CPU %", "type": "stat",
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background",
-        "thresholds": {"steps": [{"color":"green","value":0},{"color":"yellow","value":70},{"color":"red","value":85}]}},
-      "targets": [{"expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "legendFormat": "CPU"}]
-    },
-    {
-      "id": 2, "gridPos": {"h": 4, "w": 4, "x": 4,  "y": 0},
-      "title": "Memory %", "type": "stat",
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background",
-        "thresholds": {"steps": [{"color":"green","value":0},{"color":"yellow","value":75},{"color":"red","value":90}]}},
-      "targets": [{"expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "Mem"}]
-    },
-    {
-      "id": 3, "gridPos": {"h": 4, "w": 4, "x": 8,  "y": 0},
-      "title": "Disk %", "type": "stat",
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background",
-        "thresholds": {"steps": [{"color":"green","value":0},{"color":"yellow","value":70},{"color":"red","value":85}]}},
-      "targets": [{"expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})", "legendFormat": "Disk"}]
-    },
-    {
-      "id": 4, "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
-      "title": "Uptime", "type": "stat",
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "unit": "s"},
-      "targets": [{"expr": "node_time_seconds - node_boot_time_seconds", "legendFormat": "Uptime"}]
-    },
-    {
-      "id": 5, "gridPos": {"h": 4, "w": 4, "x": 0,  "y": 4},
-      "title": "xray", "type": "stat",
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background",
-        "mappings": [{"type":"value","options":{"0":{"text":"DOWN","color":"red"},"1":{"text":"UP","color":"green"}}}]},
-      "targets": [{"expr": "node_systemd_unit_state{name=\"xray.service\",state=\"active\"}", "legendFormat": "xray"}]
-    },
-    {
-      "id": 6, "gridPos": {"h": 4, "w": 4, "x": 4,  "y": 4},
-      "title": "MTProxy", "type": "stat",
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background",
-        "mappings": [{"type":"value","options":{"0":{"text":"DOWN","color":"red"},"1":{"text":"UP","color":"green"}}}]},
-      "targets": [{"expr": "mtg_container_running", "legendFormat": "mtg"}]
-    },
-    {
-      "id": 7, "gridPos": {"h": 4, "w": 4, "x": 8,  "y": 4},
-      "title": "fail2ban", "type": "stat",
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background",
-        "mappings": [{"type":"value","options":{"0":{"text":"DOWN","color":"red"},"1":{"text":"UP","color":"green"}}}]},
-      "targets": [{"expr": "node_systemd_unit_state{name=\"fail2ban.service\",state=\"active\"}", "legendFormat": "fail2ban"}]
-    },
-    {
-      "id": 8, "gridPos": {"h": 4, "w": 4, "x": 12, "y": 4},
-      "title": "Banned IPs (SSH)", "type": "stat",
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
-      "targets": [{"expr": "fail2ban_banned_ips{jail=\"sshd\"}", "legendFormat": "Banned"}]
-    },
-    {
-      "id": 9, "gridPos": {"h": 8, "w": 12, "x": 0,  "y": 8},
-      "title": "Network Traffic", "type": "timeseries",
-      "options": {"unit": "bytes"},
+      "id": 1,
+      "type": "stat",
+      "title": "CPU %",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 85}
+            ]
+          }
+        },
+        "overrides": []
+      },
       "targets": [
-        {"expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])",  "legendFormat": "RX {{device}}"},
-        {"expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m])", "legendFormat": "TX {{device}}"}
+        {
+          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "CPU",
+          "refId": "A"
+        }
       ]
     },
     {
-      "id": 10, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
-      "title": "CPU over time", "type": "timeseries",
+      "id": 2,
+      "type": "stat",
+      "title": "Memory %",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 75},
+              {"color": "red", "value": 90}
+            ]
+          }
+        },
+        "overrides": []
+      },
       "targets": [
-        {"expr": "100 - (avg by(cpu)(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "legendFormat": "CPU {{cpu}}"}
+        {
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
+          "legendFormat": "Memory",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Disk %",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 85}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"rootfs\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"rootfs\"})",
+          "legendFormat": "Disk /",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Uptime",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dtdurations",
+          "color": {"mode": "fixed", "fixedColor": "blue"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "blue", "value": null}]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "node_time_seconds - node_boot_time_seconds",
+          "legendFormat": "Uptime",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "xray",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red", "index": 0},
+                "1": {"text": "UP",   "color": "green", "index": 1}
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "node_systemd_unit_state{name=\"xray.service\",state=\"active\"}",
+          "legendFormat": "xray",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "MTProxy",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red",   "index": 0},
+                "1": {"text": "UP",   "color": "green", "index": 1}
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "mtg_container_running",
+          "legendFormat": "mtg",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "fail2ban",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red",   "index": 0},
+                "1": {"text": "UP",   "color": "green", "index": 1}
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "node_systemd_unit_state{name=\"fail2ban.service\",state=\"active\"}",
+          "legendFormat": "fail2ban",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Banned IPs (SSH)",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "orange", "value": 5},
+              {"color": "red",    "value": 20}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "fail2ban_banned_ips{jail=\"sshd\"}",
+          "legendFormat": "Banned",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Network Traffic",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "none"},
+        "legend":  {"displayMode": "list", "placement": "bottom"}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "color": {"mode": "palette-classic"}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])",
+          "legendFormat": "RX {{device}}",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m])",
+          "legendFormat": "TX {{device}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "CPU over time",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "none"},
+        "legend":  {"displayMode": "list", "placement": "bottom"}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": {"mode": "palette-classic"}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 - (avg by(cpu)(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "CPU {{cpu}}",
+          "refId": "A"
+        }
       ]
     }
   ]
@@ -528,11 +829,12 @@ cat > /usr/local/bin/mtg-metrics.sh <<'MTG_COLLECTOR'
 set -euo pipefail
 OUT="/var/lib/node_exporter/textfile_collector/mtg.prom"
 TEMP=$(mktemp)
+trap 'rm -f "$TEMP"' EXIT
 
 if docker inspect mtg --format='{{.State.Running}}' 2>/dev/null | grep -q "^true$"; then
   echo "mtg_container_running 1" >> "$TEMP"
   RESTARTS=$(docker inspect mtg --format='{{.RestartCount}}' 2>/dev/null || echo 0)
-  echo "mtg_container_restart_count $RESTARTS" >> "$TEMP"
+  echo "mtg_container_restart_count ${RESTARTS}" >> "$TEMP"
 else
   echo "mtg_container_running 0" >> "$TEMP"
   echo "mtg_container_restart_count 0" >> "$TEMP"
@@ -549,9 +851,11 @@ cat > /usr/local/bin/fail2ban-metrics.sh <<'F2B_COLLECTOR'
 set -euo pipefail
 OUT="/var/lib/node_exporter/textfile_collector/fail2ban.prom"
 TEMP=$(mktemp)
+trap 'rm -f "$TEMP"' EXIT
 
 if command -v fail2ban-client &>/dev/null && systemctl is-active --quiet fail2ban; then
-  for jail in $(fail2ban-client status 2>/dev/null | grep "Jail list" | sed 's/.*Jail list:\s*//' | tr ',' '\n' | tr -d ' '); do
+  for jail in $(fail2ban-client status 2>/dev/null \
+      | grep "Jail list" | sed 's/.*Jail list:\s*//' | tr ',' '\n' | tr -d ' '); do
     count=$(fail2ban-client status "$jail" 2>/dev/null \
       | grep "Currently banned" | awk '{print $NF}' || echo 0)
     echo "fail2ban_banned_ips{jail=\"${jail}\"} ${count}" >> "$TEMP"
@@ -565,10 +869,10 @@ F2B_COLLECTOR
 
 chmod +x /usr/local/bin/fail2ban-metrics.sh
 
-# crontab entries
+# register crontab entries
 (crontab -l 2>/dev/null | grep -v "mtg-metrics\|fail2ban-metrics" || true; \
- echo "* * * * * /usr/local/bin/mtg-metrics.sh"; \
- echo "* * * * * /usr/local/bin/fail2ban-metrics.sh") | crontab -
+ echo "* * * * * /usr/local/bin/mtg-metrics.sh 2>/dev/null"; \
+ echo "* * * * * /usr/local/bin/fail2ban-metrics.sh 2>/dev/null") | crontab -
 
 info "Textfile collectors installed (cron: every minute)"
 
