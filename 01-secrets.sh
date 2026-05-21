@@ -64,6 +64,10 @@ if [[ -f "$CONF_FILE" ]]; then
   echo ""
   read -r -p "Regenerate all secrets? [y/N] " REPLY
   [[ "${REPLY,,}" == "y" ]] || { info "Aborted."; exit 0; }
+
+  # preserve Telegram credentials across regeneration
+  TG_BOT_TOKEN_SAVED="${PROXY_MONITORING_TG_BOT_TOKEN:-}"
+  TG_CHAT_ID_SAVED="${PROXY_MONITORING_TG_CHAT_ID:-}"
 fi
 
 # ── download xray for x25519 keygen ────────────────────────────────────────────
@@ -132,8 +136,8 @@ PROXY_MTG_PORT=15001
 # ── Monitoring ─────────────────────────────────────────────────────────────────
 PROXY_MONITORING_GRAFANA_PASSWORD="${GRAFANA_PASS}"
 # Fill in before running 05-monitoring.sh:
-PROXY_MONITORING_TG_BOT_TOKEN=""
-PROXY_MONITORING_TG_CHAT_ID=""
+PROXY_MONITORING_TG_BOT_TOKEN="${TG_BOT_TOKEN_SAVED:-}"
+PROXY_MONITORING_TG_CHAT_ID="${TG_CHAT_ID_SAVED:-}"
 EOF
 
 chmod 600 "$CONF_FILE"
