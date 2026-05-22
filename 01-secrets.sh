@@ -99,11 +99,10 @@ PUBLIC_KEY=$(echo "$KEYPAIR"  | awk '/Public key/{print $NF}')
 
 VLESS_UUID=$(cat /proc/sys/kernel/random/uuid)
 SHORT_ID=$(openssl rand -hex 8)
-# mtg v2 ee-secret format: 0xEE + hex(hostname) + 16 random bytes
-# the hostname is embedded so mtg can present it as fake-TLS SNI
+# mtg v2 ee-secret format: 0xEE + 16 random bytes (hex) + hex(hostname)
 MTG_SNI="www.cloudflare.com"
 MTG_SNI_HEX=$(printf '%s' "$MTG_SNI" | od -An -tx1 | tr -d ' \n')
-MTG_SECRET="ee${MTG_SNI_HEX}$(openssl rand -hex 16)"
+MTG_SECRET="ee$(openssl rand -hex 16)${MTG_SNI_HEX}"
 GRAFANA_PASS=$(openssl rand -base64 18 | tr -d '/+=\n' | head -c 20)
 
 info "UUID:        $VLESS_UUID"
