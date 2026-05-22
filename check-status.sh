@@ -115,6 +115,38 @@ else
   ALL_OK=0
 fi
 
+# ── textfile collectors ───────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}── Textfile collectors ──────────────────────────────${NC}"
+
+TEXTFILE_DIR="/var/lib/node_exporter/textfile_collector"
+for f in mtg.prom fail2ban.prom; do
+  fpath="$TEXTFILE_DIR/$f"
+  if [[ -f "$fpath" ]]; then
+    AGE=$(( $(date +%s) - $(stat -c %Y "$fpath" 2>/dev/null || echo 0) ))
+    PERM=$(stat -c %a "$fpath" 2>/dev/null || echo "?")
+    if [[ $AGE -gt 180 ]]; then
+      warn "$f  (last updated ${AGE}s ago — stale; check timer)"
+    elif [[ "$PERM" == "600" ]]; then
+      fail "$f  (perms 600 — node_exporter can't read it; re-run 05-monitoring.sh)"
+      ALL_OK=0
+    else
+      ok "$f  (${AGE}s ago, perms ${PERM})"
+    fi
+  else
+    fail "$f  missing — collector not running"
+    ALL_OK=0
+  fi
+done
+
+for timer in mtg-metrics fail2ban-metrics; do
+  if systemctl is-active --quiet "${timer}.timer" 2>/dev/null; then
+    ok "${timer}.timer"
+  else
+    warn "${timer}.timer not active  → systemctl enable --now ${timer}.timer"
+  fi
+done
+
 # ── xray journalctl tail ──────────────────────────────────────────────────────
 if ! systemctl is-active --quiet xray 2>/dev/null; then
   echo ""
