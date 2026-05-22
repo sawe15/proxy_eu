@@ -42,9 +42,8 @@ valid() { [[ "${1:-}" =~ $2 ]]; }
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 B64_RE='^[A-Za-z0-9+/=_-]{40,}$'   # X25519 keys are ~43 base64url chars
 HEX8_RE='^[0-9a-f]{16}$'           # SHORT_ID: 8 bytes = 16 hex chars
-# ee + 16 random bytes (32 hex) + hex(www.cloudflare.com) — key MUST come before hostname
-MTG_SNI_HEX_STATIC=$(printf '%s' "www.cloudflare.com" | od -An -tx1 | tr -d ' \n')
-MTG_RE="^ee[0-9a-f]{32}${MTG_SNI_HEX_STATIC}$"
+# Accept any ee-prefix hex secret of reasonable length — exact format determined by mtg generate-secret
+MTG_RE='^ee[0-9a-f]{34,}$'
 PASS_RE='^.{8,}$'
 
 if [[ -f "$CONF_FILE" ]]; then
@@ -149,10 +148,23 @@ PUBLIC_KEY=$(echo "$KEYPAIR"  | awk '/Public key/{print $NF}')
 
 VLESS_UUID=$(cat /proc/sys/kernel/random/uuid)
 SHORT_ID=$(openssl rand -hex 8)
-# mtg v2 ee-secret format: 0xEE + 16 random bytes (hex) + hex(hostname)
 MTG_SNI="www.cloudflare.com"
-MTG_SNI_HEX=$(printf '%s' "$MTG_SNI" | od -An -tx1 | tr -d ' \n')
-MTG_SECRET="ee$(openssl rand -hex 16)${MTG_SNI_HEX}"
+
+# Use mtg itself to generate the secret — it knows the exact format its parser accepts.
+# Requires Docker (available when --regenerate is run, or when called from install.sh step 3).
+MTG_SECRET=""
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+  MTG_SECRET=$(docker run --rm nineseconds/mtg:2 generate-secret tls "$MTG_SNI" 2>/dev/null \
+    | tr -d '\r\n')
+  [[ -n "$MTG_SECRET" ]] && info "MTG secret generated via: mtg generate-secret tls $MTG_SNI"
+fi
+
+if [[ -z "${MTG_SECRET:-}" ]]; then
+  # Fallback: manually construct ee-secret (Docker not yet available — fresh install)
+  MTG_SNI_HEX=$(printf '%s' "$MTG_SNI" | od -An -tx1 | tr -d ' \n')
+  MTG_SECRET="ee$(openssl rand -hex 16)${MTG_SNI_HEX}"
+  warn "MTG secret generated manually (Docker unavailable) — may need --regenerate after step 3"
+fi
 GRAFANA_PASS=$(openssl rand -base64 18 | tr -d '/+=\n' | head -c 20)
 
 info "UUID:        $VLESS_UUID"
