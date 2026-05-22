@@ -33,7 +33,9 @@ valid() { [[ "${1:-}" =~ $2 ]]; }
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 B64_RE='^[A-Za-z0-9+/=_-]{40,}$'   # X25519 keys are ~43 base64url chars
 HEX8_RE='^[0-9a-f]{16}$'           # SHORT_ID: 8 bytes = 16 hex chars
-MTG_RE='^ee[0-9a-f]{36,}$'         # ee + hex(hostname, min 1 char) + 16 random bytes
+# ee + 16 random bytes (32 hex) + hex(www.cloudflare.com) — key MUST come before hostname
+MTG_SNI_HEX_STATIC=$(printf '%s' "www.cloudflare.com" | od -An -tx1 | tr -d ' \n')
+MTG_RE="^ee[0-9a-f]{32}${MTG_SNI_HEX_STATIC}$"
 PASS_RE='^.{8,}$'
 
 if [[ -f "$CONF_FILE" ]]; then
