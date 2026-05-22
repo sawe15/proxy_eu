@@ -11,7 +11,8 @@ BOLD='\033[1m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='
 [[ -f "$CONF_FILE" ]] || { echo "proxy.conf not found — run 01-secrets.sh first" >&2; exit 1; }
 source "$CONF_FILE"
 
-SERVER_IP=$(curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
+SERVER_IP=$(curl -4 -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
+  || curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
   || hostname -I | awk '{print $1}')
 
 # Wrap IPv6 addresses in brackets for URL usage
