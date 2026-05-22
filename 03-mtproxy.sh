@@ -86,7 +86,7 @@ if ! docker inspect "$MTG_CONTAINER" &>/dev/null; then
     --restart unless-stopped \
     -p "${PROXY_MTG_PORT}:3128" \
     "$MTG_IMAGE" \
-    simple-run 0.0.0.0:3128 "${PROXY_MTG_SECRET}"
+    simple-run "${PROXY_MTG_SECRET}"
 fi
 
 sleep 2
