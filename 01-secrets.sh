@@ -88,29 +88,36 @@ if [[ -f "$CONF_FILE" ]]; then
   TG_CHAT_ID_SAVED="${PROXY_MONITORING_TG_CHAT_ID:-}"
 fi
 
-# ── download xray for x25519 keygen ────────────────────────────────────────────
-header "Downloading xray for key generation"
-
-XRAY_VERSION="1.8.24"
+# ── locate or download xray for x25519 keygen ─────────────────────────────────
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-ARCH=$(uname -m)
-case "$ARCH" in
-  aarch64) XRAY_ARCHIVE="Xray-linux-arm64-v8a.zip" ;;
-  *)       XRAY_ARCHIVE="Xray-linux-64.zip" ;;
-esac
-
-XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${XRAY_ARCHIVE}"
-info "Fetching $XRAY_URL"
-curl -fsSL --retry 3 -o "$TMPDIR/xray.zip" "$XRAY_URL"
-unzip -q "$TMPDIR/xray.zip" xray -d "$TMPDIR/"
-chmod +x "$TMPDIR/xray"
+XRAY_BIN=""
+if [[ -x "/usr/local/bin/xray" ]]; then
+  XRAY_BIN="/usr/local/bin/xray"
+  info "Using installed xray: $("$XRAY_BIN" version | head -1)"
+else
+  header "Downloading xray for key generation"
+  XRAY_VERSION=$(curl -fsSL --retry 3 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" \
+    | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+  [[ -n "$XRAY_VERSION" ]] || error "Failed to fetch latest xray version from GitHub"
+  ARCH=$(uname -m)
+  case "$ARCH" in
+    aarch64) XRAY_ARCHIVE="Xray-linux-arm64-v8a.zip" ;;
+    *)       XRAY_ARCHIVE="Xray-linux-64.zip" ;;
+  esac
+  XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${XRAY_ARCHIVE}"
+  info "Fetching $XRAY_URL"
+  curl -fsSL --retry 3 -o "$TMPDIR/xray.zip" "$XRAY_URL"
+  unzip -q "$TMPDIR/xray.zip" xray -d "$TMPDIR/"
+  chmod +x "$XRAY_BIN"
+  XRAY_BIN="$TMPDIR/xray"
+fi
 
 # ── generate secrets ────────────────────────────────────────────────────────────
 header "Generating secrets"
 
-KEYPAIR=$("$TMPDIR/xray" x25519 2>/dev/null)
+KEYPAIR=$("$XRAY_BIN" x25519 2>/dev/null)
 PRIVATE_KEY=$(echo "$KEYPAIR" | awk '/Private key/{print $NF}')
 PUBLIC_KEY=$(echo "$KEYPAIR"  | awk '/Public key/{print $NF}')
 [[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" ]] || error "Failed to generate X25519 keypair"
