@@ -106,7 +106,8 @@ fi
 # ── print links ────────────────────────────────────────────────────────────────
 header "Done"
 
-SERVER_IP=$(curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
+SERVER_IP=$(curl -4 -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
+  || curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
   || hostname -I | awk '{print $1}')
 
 echo ""
