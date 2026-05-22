@@ -241,7 +241,7 @@ groups:
     interval: 30s
     rules:
       - alert: XrayDown
-        expr: node_systemd_unit_state{name="xray.service",state="active"} == 0
+        expr: (node_systemd_unit_state{name="xray.service",state="active"} == 0) or absent(node_systemd_unit_state{name="xray.service",state="active"})
         for: 1m
         labels:
           severity: critical
@@ -249,7 +249,7 @@ groups:
           summary: "xray.service is DOWN on {{ $labels.instance }}"
 
       - alert: DockerDown
-        expr: node_systemd_unit_state{name="docker.service",state="active"} == 0
+        expr: (node_systemd_unit_state{name="docker.service",state="active"} == 0) or absent(node_systemd_unit_state{name="docker.service",state="active"})
         for: 1m
         labels:
           severity: critical
@@ -257,7 +257,7 @@ groups:
           summary: "docker.service is DOWN on {{ $labels.instance }}"
 
       - alert: MTGContainerDown
-        expr: mtg_container_running == 0
+        expr: (mtg_container_running == 0) or absent(mtg_container_running)
         for: 1m
         labels:
           severity: critical
@@ -851,6 +851,9 @@ else
   echo "mtg_container_restart_count 0" >> "$TEMP"
 fi
 
+# mktemp creates files as 600 (root-only); node_exporter runs as a separate
+# user and must be able to read the file.
+chmod 644 "$TEMP"
 mv "$TEMP" "$OUT"
 MTG_COLLECTOR
 
@@ -875,17 +878,49 @@ else
   echo "fail2ban_banned_ips{jail=\"sshd\"} 0" >> "$TEMP"
 fi
 
+chmod 644 "$TEMP"
 mv "$TEMP" "$OUT"
 F2B_COLLECTOR
 
 chmod +x /usr/local/bin/fail2ban-metrics.sh
 
-# register crontab entries
-(crontab -l 2>/dev/null | grep -v "mtg-metrics\|fail2ban-metrics" || true; \
- echo "* * * * * /usr/local/bin/mtg-metrics.sh 2>/dev/null"; \
- echo "* * * * * /usr/local/bin/fail2ban-metrics.sh 2>/dev/null") | crontab -
+# systemd timers (more reliable than cron; cron may not be installed)
+for collector in mtg fail2ban; do
+  cat > "/etc/systemd/system/${collector}-metrics.service" <<EOF
+[Unit]
+Description=${collector} textfile metrics collector
+After=docker.service
 
-info "Textfile collectors installed (cron: every minute)"
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/${collector}-metrics.sh
+EOF
+
+  cat > "/etc/systemd/system/${collector}-metrics.timer" <<EOF
+[Unit]
+Description=Run ${collector} metrics collector every minute
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "${collector}-metrics.timer"
+  info "${collector}-metrics timer enabled"
+done
+
+# keep legacy cron entries in sync too, as belt-and-suspenders
+if command -v crontab &>/dev/null; then
+  (crontab -l 2>/dev/null | grep -v "mtg-metrics\|fail2ban-metrics" || true; \
+   echo "* * * * * /usr/local/bin/mtg-metrics.sh 2>/dev/null"; \
+   echo "* * * * * /usr/local/bin/fail2ban-metrics.sh 2>/dev/null") | crontab -
+fi
+
+info "Textfile collectors installed (systemd timers + cron fallback)"
 
 # run once immediately to pre-populate
 /usr/local/bin/mtg-metrics.sh    2>/dev/null || true
