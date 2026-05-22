@@ -88,49 +88,64 @@ if [[ -f "$CONF_FILE" ]]; then
   TG_CHAT_ID_SAVED="${PROXY_MONITORING_TG_CHAT_ID:-}"
 fi
 
-# ── locate or download xray for x25519 keygen ─────────────────────────────────
+# ── generate x25519 keypair ─────────────────────────────────────────────────────
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-_download_xray() {
-  local ver arc url
-  ver=$(curl -fsSL --retry 3 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" \
-    | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-  [[ -n "$ver" ]] || error "Failed to fetch latest xray version from GitHub"
-  case "$(uname -m)" in
-    aarch64) arc="Xray-linux-arm64-v8a.zip" ;;
-    *)       arc="Xray-linux-64.zip" ;;
-  esac
-  url="https://github.com/XTLS/Xray-core/releases/download/v${ver}/${arc}"
-  info "Downloading xray v${ver} for key generation..."
-  curl -fsSL --retry 3 -o "$TMPDIR/xray.zip" "$url"
-  unzip -q "$TMPDIR/xray.zip" xray -d "$TMPDIR/"
-  chmod +x "$TMPDIR/xray"
+_keypair_via_openssl() {
+  # openssl 3.x: x25519 private key DER = 16-byte header + 32-byte key
+  #              x25519 public  key DER = 12-byte header + 32-byte key
+  local tmpkey="$TMPDIR/x25519.pem"
+  openssl genpkey -algorithm x25519 -out "$tmpkey" 2>/dev/null || return 1
+  local priv pub
+  priv=$(openssl pkey -in "$tmpkey" -outform DER 2>/dev/null \
+    | dd bs=1 skip=16 count=32 2>/dev/null \
+    | base64 | tr '+/' '-_' | tr -d '=\n')
+  pub=$(openssl pkey -in "$tmpkey" -pubout -outform DER 2>/dev/null \
+    | dd bs=1 skip=12 count=32 2>/dev/null \
+    | base64 | tr '+/' '-_' | tr -d '=\n')
+  [[ ${#priv} -ge 40 && ${#pub} -ge 40 ]] || return 1
+  echo "Private key: $priv"
+  echo "Public key:  $pub"
 }
 
-XRAY_BIN=""
-if [[ -x "/usr/local/bin/xray" ]]; then
-  # Verify x25519 subcommand works — output format can vary across versions
-  if /usr/local/bin/xray x25519 2>/dev/null | grep -q "Private key"; then
-    XRAY_BIN="/usr/local/bin/xray"
-    info "Using installed xray: $(/usr/local/bin/xray version | head -1)"
-  else
-    warn "Installed xray does not support x25519 key generation — downloading separately"
-    _download_xray
-    XRAY_BIN="$TMPDIR/xray"
-  fi
-else
-  _download_xray
-  XRAY_BIN="$TMPDIR/xray"
-fi
+_keypair_via_xray() {
+  local bin="${1:-}"
+  [[ -x "$bin" ]] || return 1
+  local out priv pub
+  out=$("$bin" x25519 2>/dev/null || true)
+  # Accept any format: "Private key: xxx", "privateKey: xxx", etc.
+  priv=$(echo "$out" | grep -i "private" | grep -oE '[A-Za-z0-9_-]{40,}' | head -1)
+  pub=$(echo "$out" | grep -i "public"  | grep -oE '[A-Za-z0-9_-]{40,}' | head -1)
+  [[ -n "$priv" && -n "$pub" ]] || return 1
+  echo "Private key: $priv"
+  echo "Public key:  $pub"
+}
 
 # ── generate secrets ────────────────────────────────────────────────────────────
 header "Generating secrets"
 
-KEYPAIR=$("$XRAY_BIN" x25519)
+KEYPAIR=""
+if KEYPAIR=$(_keypair_via_openssl 2>/dev/null) && [[ -n "$KEYPAIR" ]]; then
+  info "Generated X25519 keypair via openssl"
+elif KEYPAIR=$(_keypair_via_xray "/usr/local/bin/xray" 2>/dev/null) && [[ -n "$KEYPAIR" ]]; then
+  info "Generated X25519 keypair via installed xray"
+else
+  # Last resort: download xray 1.8.24 (last version with stable x25519 output)
+  warn "openssl x25519 unavailable — downloading xray 1.8.24 for key generation"
+  local_arc="Xray-linux-64.zip"
+  [[ "$(uname -m)" == "aarch64" ]] && local_arc="Xray-linux-arm64-v8a.zip"
+  curl -fsSL --retry 3 \
+    -o "$TMPDIR/xray.zip" \
+    "https://github.com/XTLS/Xray-core/releases/download/v1.8.24/${local_arc}"
+  unzip -q "$TMPDIR/xray.zip" xray -d "$TMPDIR/"
+  chmod +x "$TMPDIR/xray"
+  KEYPAIR=$(_keypair_via_xray "$TMPDIR/xray") || error "Failed to generate X25519 keypair"
+fi
+
 PRIVATE_KEY=$(echo "$KEYPAIR" | awk '/Private key/{print $NF}')
 PUBLIC_KEY=$(echo "$KEYPAIR"  | awk '/Public key/{print $NF}')
-[[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" ]] || error "Failed to generate X25519 keypair"
+[[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" ]] || error "Failed to parse X25519 keypair"
 
 VLESS_UUID=$(cat /proc/sys/kernel/random/uuid)
 SHORT_ID=$(openssl rand -hex 8)
