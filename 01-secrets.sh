@@ -92,32 +92,42 @@ fi
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
+_download_xray() {
+  local ver arc url
+  ver=$(curl -fsSL --retry 3 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" \
+    | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+  [[ -n "$ver" ]] || error "Failed to fetch latest xray version from GitHub"
+  case "$(uname -m)" in
+    aarch64) arc="Xray-linux-arm64-v8a.zip" ;;
+    *)       arc="Xray-linux-64.zip" ;;
+  esac
+  url="https://github.com/XTLS/Xray-core/releases/download/v${ver}/${arc}"
+  info "Downloading xray v${ver} for key generation..."
+  curl -fsSL --retry 3 -o "$TMPDIR/xray.zip" "$url"
+  unzip -q "$TMPDIR/xray.zip" xray -d "$TMPDIR/"
+  chmod +x "$TMPDIR/xray"
+}
+
 XRAY_BIN=""
 if [[ -x "/usr/local/bin/xray" ]]; then
-  XRAY_BIN="/usr/local/bin/xray"
-  info "Using installed xray: $("$XRAY_BIN" version | head -1)"
+  # Verify x25519 subcommand works — output format can vary across versions
+  if /usr/local/bin/xray x25519 2>/dev/null | grep -q "Private key"; then
+    XRAY_BIN="/usr/local/bin/xray"
+    info "Using installed xray: $(/usr/local/bin/xray version | head -1)"
+  else
+    warn "Installed xray does not support x25519 key generation — downloading separately"
+    _download_xray
+    XRAY_BIN="$TMPDIR/xray"
+  fi
 else
-  header "Downloading xray for key generation"
-  XRAY_VERSION=$(curl -fsSL --retry 3 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" \
-    | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-  [[ -n "$XRAY_VERSION" ]] || error "Failed to fetch latest xray version from GitHub"
-  ARCH=$(uname -m)
-  case "$ARCH" in
-    aarch64) XRAY_ARCHIVE="Xray-linux-arm64-v8a.zip" ;;
-    *)       XRAY_ARCHIVE="Xray-linux-64.zip" ;;
-  esac
-  XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${XRAY_ARCHIVE}"
-  info "Fetching $XRAY_URL"
-  curl -fsSL --retry 3 -o "$TMPDIR/xray.zip" "$XRAY_URL"
-  unzip -q "$TMPDIR/xray.zip" xray -d "$TMPDIR/"
-  chmod +x "$XRAY_BIN"
+  _download_xray
   XRAY_BIN="$TMPDIR/xray"
 fi
 
 # ── generate secrets ────────────────────────────────────────────────────────────
 header "Generating secrets"
 
-KEYPAIR=$("$XRAY_BIN" x25519 2>/dev/null)
+KEYPAIR=$("$XRAY_BIN" x25519)
 PRIVATE_KEY=$(echo "$KEYPAIR" | awk '/Private key/{print $NF}')
 PUBLIC_KEY=$(echo "$KEYPAIR"  | awk '/Public key/{print $NF}')
 [[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" ]] || error "Failed to generate X25519 keypair"
