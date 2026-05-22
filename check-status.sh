@@ -87,13 +87,16 @@ done
 echo ""
 echo -e "${BOLD}── Firewall (UFW) ───────────────────────────────────${NC}"
 
-if command -v ufw &>/dev/null; then
-  UFW_STATUS=$(ufw status 2>/dev/null | head -1)
+# ufw lives in /usr/sbin which is not in a regular user's PATH on Debian
+UFW_BIN=$(command -v ufw 2>/dev/null || { [[ -x /usr/sbin/ufw ]] && echo /usr/sbin/ufw; } || true)
+
+if [[ -n "$UFW_BIN" ]]; then
+  UFW_STATUS=$(sudo "$UFW_BIN" status 2>/dev/null | head -1 || "$UFW_BIN" status 2>/dev/null | head -1 || true)
   if echo "$UFW_STATUS" | grep -q "active"; then
     ok "UFW active"
-    ufw status 2>/dev/null | grep -E "ALLOW|DENY" | sed 's/^/      /'
+    sudo "$UFW_BIN" status 2>/dev/null | grep -E "ALLOW|DENY" | sed 's/^/      /' || true
   else
-    warn "UFW inactive"
+    warn "UFW installed but inactive"
   fi
 else
   warn "ufw not installed"

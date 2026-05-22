@@ -161,12 +161,14 @@ MTG_SNI="www.cloudflare.com"
 # mtg v2 outputs base64url; fallback for fresh installs (Docker not yet available) uses hex.
 MTG_SECRET=""
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-  MTG_SECRET=$(docker run --rm nineseconds/mtg:2 generate-secret tls "$MTG_SNI" 2>/dev/null \
-    | tr -d '[:space:]' || true)
+  # Capture both stdout and stderr: mtg may write the secret to either stream.
+  # grep extracts just the secret token, ignoring docker pull progress lines.
+  MTG_SECRET=$(docker run --rm nineseconds/mtg:2 generate-secret tls "$MTG_SNI" 2>&1 \
+    | grep -oE '7[A-Za-z0-9_-]{46,}|ee[0-9a-fA-F]{34,}' | head -1 || true)
   if valid "${MTG_SECRET:-}" "$MTG_RE"; then
     info "MTG secret generated via: mtg generate-secret tls $MTG_SNI"
   else
-    warn "mtg generate-secret returned unexpected output ('${MTG_SECRET:-<empty>}') — falling back"
+    warn "mtg generate-secret returned no valid secret — falling back to manual construction"
     MTG_SECRET=""
   fi
 fi
