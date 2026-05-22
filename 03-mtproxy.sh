@@ -88,14 +88,15 @@ if ! docker inspect "$MTG_CONTAINER" &>/dev/null; then
   docker pull "$MTG_IMAGE"
 
   info "Starting container on port ${PROXY_MTG_PORT}..."
-  # simple-run takes two positional args: <bind-to> <secret>
-  # Omitting bind-to causes the secret to be consumed as bind-to → "expected <secret>"
+  # --network host: container binds directly to the host interface — no docker bridge,
+  # no iptables DNAT, no docker-proxy in between that silently drops external SYNs.
+  # simple-run arg order: [<bind-to>] <secret>  (bind-to optional but must be first)
   docker run -d \
     --name "$MTG_CONTAINER" \
     --restart unless-stopped \
-    -p "${PROXY_MTG_PORT}:3128" \
+    --network host \
     "$MTG_IMAGE" \
-    simple-run "0.0.0.0:3128" "${PROXY_MTG_SECRET}"
+    simple-run "0.0.0.0:${PROXY_MTG_PORT}" "${PROXY_MTG_SECRET}"
 fi
 
 sleep 2
