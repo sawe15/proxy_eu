@@ -52,8 +52,8 @@ case "$ARCH" in
   *)       DL_ARCH="amd64" ;;
 esac
 
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 mkdir -p "$MONITORING_CONFIG_DIR" "$MONITORING_RULES_DIR" "$TEXTFILE_DIR" \
          "$VM_DATA_DIR" "$GRAFANA_DASHBOARD_DIR"
@@ -66,8 +66,8 @@ install_binary() {
     return 0
   fi
   info "Downloading $(basename "$archive")..."
-  curl -fsSL --retry 3 -o "$TMPDIR/$archive" "$url"
-  tar -xzf "$TMPDIR/$archive" -C "$TMPDIR/"
+  curl -fsSL --retry 3 -o "$WORK_DIR/$archive" "$url"
+  tar -xzf "$WORK_DIR/$archive" -C "$WORK_DIR/"
   local src
   src=$(find "$TMPDIR" -name "$binary" -type f | head -1)
   [[ -n "$src" ]] || error "Binary '$binary' not found in archive"
@@ -147,10 +147,10 @@ VMU_URL="https://github.com/VictoriaMetrics/VictoriaMetrics/releases/download/v$
 
 if [[ ! -f "$MONITORING_INSTALL_DIR/vmagent-prod" || ! -f "$MONITORING_INSTALL_DIR/vmalert-prod" ]]; then
   info "Downloading $VMU_ARCHIVE..."
-  curl -fsSL --retry 3 -o "$TMPDIR/$VMU_ARCHIVE" "$VMU_URL"
-  tar -xzf "$TMPDIR/$VMU_ARCHIVE" -C "$TMPDIR/"
-  install -m 755 "$TMPDIR/vmagent-prod" "$MONITORING_INSTALL_DIR/vmagent-prod"
-  install -m 755 "$TMPDIR/vmalert-prod" "$MONITORING_INSTALL_DIR/vmalert-prod"
+  curl -fsSL --retry 3 -o "$WORK_DIR/$VMU_ARCHIVE" "$VMU_URL"
+  tar -xzf "$WORK_DIR/$VMU_ARCHIVE" -C "$WORK_DIR/"
+  install -m 755 "$WORK_DIR/vmagent-prod" "$MONITORING_INSTALL_DIR/vmagent-prod"
+  install -m 755 "$WORK_DIR/vmalert-prod" "$MONITORING_INSTALL_DIR/vmalert-prod"
   info "Installed vmagent-prod and vmalert-prod"
 else
   info "vmagent-prod and vmalert-prod already installed"
@@ -372,8 +372,8 @@ if ! dpkg -l grafana 2>/dev/null | grep -q '^ii'; then
   GRAFANA_DEB="grafana_${GRAFANA_VERSION}_${DL_ARCH}.deb"
   GRAFANA_URL="https://dl.grafana.com/oss/release/${GRAFANA_DEB}"
   info "Downloading $GRAFANA_DEB..."
-  curl -fsSL --retry 3 -o "$TMPDIR/$GRAFANA_DEB" "$GRAFANA_URL"
-  apt-get install -y -qq "$TMPDIR/$GRAFANA_DEB"
+  curl -fsSL --retry 3 -o "$WORK_DIR/$GRAFANA_DEB" "$GRAFANA_URL"
+  apt-get install -y -qq "$WORK_DIR/$GRAFANA_DEB"
 else
   info "Grafana already installed"
 fi
@@ -818,6 +818,17 @@ DASH_EOF
 
 systemctl daemon-reload
 systemctl enable --now grafana-server
+
+# grafana.ini admin_password only applies on first initialisation.
+# Force-reset via grafana-cli so every re-run of this script keeps the
+# password in sync with proxy.conf, even if Grafana was previously set up.
+sleep 2
+if grafana-cli admin reset-admin-password "${GRAFANA_PASS}" 2>/dev/null; then
+  systemctl restart grafana-server
+  info "Grafana admin password set from proxy.conf"
+else
+  warn "grafana-cli reset failed — password will apply on Grafana's first start"
+fi
 info "Grafana started on 127.0.0.1:${PORT_GRAFANA}"
 
 # ── textfile collectors ────────────────────────────────────────────────────────
