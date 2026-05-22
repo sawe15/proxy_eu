@@ -56,8 +56,10 @@ info "xray installed: $("$XRAY_INSTALL_DIR/xray" version | head -1)"
 header "Creating directories"
 
 mkdir -p "$XRAY_CONFIG_DIR" "$XRAY_LOG_DIR"
-chown nobody:nogroup "$XRAY_LOG_DIR" "$XRAY_CONFIG_DIR"
-chmod 750 "$XRAY_CONFIG_DIR"
+touch "$XRAY_LOG_DIR/access.log" "$XRAY_LOG_DIR/error.log"
+chown -R nobody:nogroup "$XRAY_LOG_DIR" "$XRAY_CONFIG_DIR"
+chmod 750 "$XRAY_CONFIG_DIR" "$XRAY_LOG_DIR"
+chmod 640 "$XRAY_LOG_DIR/access.log" "$XRAY_LOG_DIR/error.log"
 
 # ── config.json ────────────────────────────────────────────────────────────────
 header "Writing /etc/xray/config.json"
