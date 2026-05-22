@@ -14,9 +14,16 @@ source "$CONF_FILE"
 SERVER_IP=$(curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
   || hostname -I | awk '{print $1}')
 
+# Wrap IPv6 addresses in brackets for URL usage
+if [[ "$SERVER_IP" == *:* ]]; then
+  HOST="[${SERVER_IP}]"
+else
+  HOST="$SERVER_IP"
+fi
+
 # ── VLESS URI ──────────────────────────────────────────────────────────────────
 # format: vless://uuid@host:port?type=tcp&security=reality&pbk=...&fp=chrome&sni=...&sid=...&flow=...#label
-VLESS_LINK="vless://${PROXY_VLESS_UUID}@${SERVER_IP}:${PROXY_XRAY_PORT}?type=tcp&security=reality&pbk=${PROXY_XRAY_PUBLIC_KEY}&fp=chrome&sni=${PROXY_XRAY_SNI}&sid=${PROXY_XRAY_SHORT_ID}&flow=${PROXY_XRAY_FLOW}#proxy-eu"
+VLESS_LINK="vless://${PROXY_VLESS_UUID}@${HOST}:${PROXY_XRAY_PORT}?type=tcp&security=reality&pbk=${PROXY_XRAY_PUBLIC_KEY}&fp=chrome&sni=${PROXY_XRAY_SNI}&sid=${PROXY_XRAY_SHORT_ID}&flow=${PROXY_XRAY_FLOW}#proxy-eu"
 
 # ── MTProxy links ──────────────────────────────────────────────────────────────
 MTG_TG_LINK="tg://proxy?server=${SERVER_IP}&port=${PROXY_MTG_PORT}&secret=${PROXY_MTG_SECRET}"
