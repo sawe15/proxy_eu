@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Generates all secrets for a standalone proxy and writes proxy.conf.
 # Run once on the machine that will host the proxy (or locally).
+# Usage: ./01-secrets.sh [-r|--regenerate]
 # Requires: curl, unzip, openssl
 set -euo pipefail
 
@@ -13,6 +14,14 @@ info()    { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 header()  { echo -e "\n${BOLD}==> $*${NC}"; }
+
+FORCE_REGEN=0
+for arg in "$@"; do
+  case "$arg" in
+    -r|--regenerate) FORCE_REGEN=1 ;;
+    *) error "Unknown option: $arg. Usage: $0 [-r|--regenerate]" ;;
+  esac
+done
 
 # ── prereqs ────────────────────────────────────────────────────────────────────
 for cmd in curl unzip openssl; do
@@ -33,7 +42,9 @@ valid() { [[ "${1:-}" =~ $2 ]]; }
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 B64_RE='^[A-Za-z0-9+/=_-]{40,}$'   # X25519 keys are ~43 base64url chars
 HEX8_RE='^[0-9a-f]{16}$'           # SHORT_ID: 8 bytes = 16 hex chars
-MTG_RE='^ee[0-9a-f]{36,}$'         # ee + hex(hostname, min 1 char) + 16 random bytes
+# ee + 16 random bytes (32 hex) + hex(www.cloudflare.com) — key MUST come before hostname
+MTG_SNI_HEX_STATIC=$(printf '%s' "www.cloudflare.com" | od -An -tx1 | tr -d ' \n')
+MTG_RE="^ee[0-9a-f]{32}${MTG_SNI_HEX_STATIC}$"
 PASS_RE='^.{8,}$'
 
 if [[ -f "$CONF_FILE" ]]; then
@@ -48,7 +59,7 @@ if [[ -f "$CONF_FILE" ]]; then
   valid "${PROXY_MTG_SECRET:-}"             "$MTG_RE"  || INVALID+=("PROXY_MTG_SECRET")
   valid "${PROXY_MONITORING_GRAFANA_PASSWORD:-}" "$PASS_RE" || INVALID+=("PROXY_MONITORING_GRAFANA_PASSWORD")
 
-  if [[ ${#INVALID[@]} -eq 0 ]]; then
+  if [[ ${#INVALID[@]} -eq 0 && $FORCE_REGEN -eq 0 ]]; then
     info "proxy.conf exists and all secrets are valid — nothing to do."
     info "  UUID:        ${PROXY_VLESS_UUID}"
     info "  Public key:  ${PROXY_XRAY_PUBLIC_KEY}"
@@ -57,13 +68,20 @@ if [[ -f "$CONF_FILE" ]]; then
     exit 0
   fi
 
-  warn "proxy.conf exists but the following secrets are missing or invalid:"
-  for field in "${INVALID[@]}"; do
-    warn "  - $field"
-  done
-  echo ""
-  read -r -p "Regenerate all secrets? [y/N] " REPLY
-  [[ "${REPLY,,}" == "y" ]] || { info "Aborted."; exit 0; }
+  if [[ ${#INVALID[@]} -gt 0 ]]; then
+    warn "proxy.conf exists but the following secrets are missing or invalid:"
+    for field in "${INVALID[@]}"; do
+      warn "  - $field"
+    done
+    echo ""
+  fi
+
+  if [[ $FORCE_REGEN -eq 1 ]]; then
+    warn "Force-regenerating all secrets (--regenerate flag)."
+  else
+    read -r -p "Regenerate all secrets? [y/N] " REPLY
+    [[ "${REPLY,,}" == "y" ]] || { info "Aborted."; exit 0; }
+  fi
 
   # preserve Telegram credentials across regeneration
   TG_BOT_TOKEN_SAVED="${PROXY_MONITORING_TG_BOT_TOKEN:-}"
