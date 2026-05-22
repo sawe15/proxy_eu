@@ -19,13 +19,17 @@ source "$CONF_FILE"
 
 [[ -n "${PROXY_XRAY_PRIVATE_KEY:-}" ]] || error "PROXY_XRAY_PRIVATE_KEY missing in proxy.conf"
 
-XRAY_VERSION="1.8.24"
 XRAY_INSTALL_DIR="/usr/local/bin"
 XRAY_SHARE_DIR="/usr/local/share/xray"
 XRAY_CONFIG_DIR="/etc/xray"
 XRAY_LOG_DIR="/var/log/xray"
 
 # ── install xray ───────────────────────────────────────────────────────────────
+
+XRAY_VERSION=$(curl -fsSL --retry 3 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" \
+  | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+[[ -n "$XRAY_VERSION" ]] || error "Failed to fetch latest xray version from GitHub"
+
 header "Installing xray v${XRAY_VERSION}"
 
 ARCH=$(uname -m)
