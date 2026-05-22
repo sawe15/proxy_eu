@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Master installer for a standalone proxy.
 # Runs all setup scripts in order.
-# Usage: sudo ./install.sh
+# Usage: sudo ./install.sh [--regenerate]
+#   --regenerate  Force-regenerate all secrets and redeploy xray + mtg.
+#                 Skips hardening and monitoring (already configured).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONF_FILE="$SCRIPT_DIR/proxy.conf"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
 info()   { echo -e "${GREEN}[INFO]${NC}  $*"; }
@@ -18,10 +21,37 @@ header() {
 
 [[ $EUID -eq 0 ]] || error "Run as root: sudo $0"
 
+REGENERATE=0
+for arg in "$@"; do
+  case "$arg" in
+    -r|--regenerate) REGENERATE=1 ;;
+    *) error "Unknown option: $arg. Usage: $0 [--regenerate]" ;;
+  esac
+done
+
 for script in 01-secrets.sh 02-xray.sh 03-mtproxy.sh 04-harden.sh 05-monitoring.sh; do
   [[ -f "$SCRIPT_DIR/$script" ]] || error "Script not found: $SCRIPT_DIR/$script"
   chmod +x "$SCRIPT_DIR/$script"
 done
+
+# ── regenerate mode: rotate secrets and redeploy xray + mtg only ───────────────
+if [[ $REGENERATE -eq 1 ]]; then
+  header "Regenerating secrets"
+  bash "$SCRIPT_DIR/01-secrets.sh" --regenerate
+
+  header "Redeploying xray with new secrets"
+  bash "$SCRIPT_DIR/02-xray.sh"
+
+  header "Redeploying mtg with new secret"
+  bash "$SCRIPT_DIR/03-mtproxy.sh"
+
+  echo ""
+  echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}  Secrets rotated — new connection links${NC}"
+  echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  bash "$SCRIPT_DIR/show-links.sh"
+  exit 0
+fi
 
 # ── step 1: secrets ────────────────────────────────────────────────────────────
 header "Step 1 / 5 — Generate secrets"
