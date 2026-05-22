@@ -203,7 +203,7 @@ systemctl is-active --quiet xray && info "xray is running" || warn "xray is NOT 
 echo ""
 info "Client connection details:"
 echo "  Protocol:   VLESS + Reality"
-echo "  Address:    $(curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
+echo "  Address:    $(curl -4 -fsSL --max-time 5 https://ifconfig.me 2>/dev/null || curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
 echo "  Port:       ${PROXY_XRAY_PORT}"
 echo "  UUID:       ${PROXY_VLESS_UUID}"
 echo "  Flow:       ${PROXY_XRAY_FLOW}"
