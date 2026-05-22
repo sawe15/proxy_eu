@@ -19,13 +19,17 @@ source "$CONF_FILE"
 
 [[ -n "${PROXY_XRAY_PRIVATE_KEY:-}" ]] || error "PROXY_XRAY_PRIVATE_KEY missing in proxy.conf"
 
-XRAY_VERSION="1.8.24"
 XRAY_INSTALL_DIR="/usr/local/bin"
 XRAY_SHARE_DIR="/usr/local/share/xray"
 XRAY_CONFIG_DIR="/etc/xray"
 XRAY_LOG_DIR="/var/log/xray"
 
 # ── install xray ───────────────────────────────────────────────────────────────
+
+XRAY_VERSION=$(curl -fsSL --retry 3 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" \
+  | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+[[ -n "$XRAY_VERSION" ]] || error "Failed to fetch latest xray version from GitHub"
+
 header "Installing xray v${XRAY_VERSION}"
 
 ARCH=$(uname -m)
@@ -49,16 +53,6 @@ mkdir -p "$XRAY_SHARE_DIR"
 [[ -f "$TMPDIR/xray-extract/geoip.dat"   ]] && install -m 644 "$TMPDIR/xray-extract/geoip.dat"   "$XRAY_SHARE_DIR/geoip.dat"
 [[ -f "$TMPDIR/xray-extract/geosite.dat" ]] && install -m 644 "$TMPDIR/xray-extract/geosite.dat" "$XRAY_SHARE_DIR/geosite.dat"
 
-# Grant CAP_NET_BIND_SERVICE so xray can bind port 443 as User=nobody.
-# setcap is more reliable than ambient capabilities in all systemd versions.
-if command -v setcap &>/dev/null; then
-  setcap cap_net_bind_service=+ep "$XRAY_INSTALL_DIR/xray"
-  info "setcap: cap_net_bind_service granted to xray binary"
-else
-  apt-get install -y -qq libcap2-bin
-  setcap cap_net_bind_service=+ep "$XRAY_INSTALL_DIR/xray"
-  info "setcap: cap_net_bind_service granted to xray binary"
-fi
 
 info "xray installed: $("$XRAY_INSTALL_DIR/xray" version | head -1)"
 
@@ -66,8 +60,10 @@ info "xray installed: $("$XRAY_INSTALL_DIR/xray" version | head -1)"
 header "Creating directories"
 
 mkdir -p "$XRAY_CONFIG_DIR" "$XRAY_LOG_DIR"
-chown nobody:nogroup "$XRAY_LOG_DIR" "$XRAY_CONFIG_DIR"
-chmod 750 "$XRAY_CONFIG_DIR"
+touch "$XRAY_LOG_DIR/access.log" "$XRAY_LOG_DIR/error.log"
+chown -R nobody:nogroup "$XRAY_LOG_DIR" "$XRAY_CONFIG_DIR"
+chmod 750 "$XRAY_CONFIG_DIR" "$XRAY_LOG_DIR"
+chmod 640 "$XRAY_LOG_DIR/access.log" "$XRAY_LOG_DIR/error.log"
 
 # ── config.json ────────────────────────────────────────────────────────────────
 header "Writing /etc/xray/config.json"
@@ -165,8 +161,8 @@ After=network.target nss-lookup.target
 [Service]
 User=nobody
 Group=nogroup
-# CAP_NET_BIND_SERVICE is granted via setcap on the binary; no ambient caps needed.
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
 Restart=on-failure
@@ -207,7 +203,7 @@ systemctl is-active --quiet xray && info "xray is running" || warn "xray is NOT 
 echo ""
 info "Client connection details:"
 echo "  Protocol:   VLESS + Reality"
-echo "  Address:    $(curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
+echo "  Address:    $(curl -4 -fsSL --max-time 5 https://ifconfig.me 2>/dev/null || curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
 echo "  Port:       ${PROXY_XRAY_PORT}"
 echo "  UUID:       ${PROXY_VLESS_UUID}"
 echo "  Flow:       ${PROXY_XRAY_FLOW}"
