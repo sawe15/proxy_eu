@@ -36,14 +36,12 @@ else
 fi
 
 # ── validate existing secrets ──────────────────────────────────────────────────
-# Returns true if the value matches the given regex
 valid() { [[ "${1:-}" =~ $2 ]]; }
 
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 B64_RE='^[A-Za-z0-9+/=_-]{40,}$'   # X25519 keys are ~43 base64url chars
 HEX8_RE='^[0-9a-f]{16}$'           # SHORT_ID: 8 bytes = 16 hex chars
-# Accept any ee-prefix hex secret of reasonable length — exact format determined by mtg generate-secret
-MTG_RE='^ee[0-9a-f]{34,}$'
+MTG_RE='^ee[0-9a-f]{34,}$'         # mtg TLS secret: ee + 16 bytes random + SNI hex
 PASS_RE='^.{8,}$'
 
 if [[ -f "$CONF_FILE" ]]; then
@@ -87,14 +85,27 @@ if [[ -f "$CONF_FILE" ]]; then
   TG_CHAT_ID_SAVED="${PROXY_MONITORING_TG_CHAT_ID:-}"
 fi
 
-# ── generate x25519 keypair ─────────────────────────────────────────────────────
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+# ── generate x25519 keypair ────────────────────────────────────────────────────
+# Use a local var so we don't shadow the system $TMPDIR used by docker and others
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+_keypair_via_xray() {
+  local bin="${1:-}"
+  [[ -x "$bin" ]] || return 1
+  local out priv pub
+  out=$("$bin" x25519 2>/dev/null || true)
+  priv=$(echo "$out" | grep -i "private" | grep -oE '[A-Za-z0-9_-]{40,}' | head -1)
+  pub=$(echo "$out"  | grep -i "public"  | grep -oE '[A-Za-z0-9_-]{40,}' | head -1)
+  [[ -n "$priv" && -n "$pub" ]] || return 1
+  echo "Private key: $priv"
+  echo "Public key:  $pub"
+}
 
 _keypair_via_openssl() {
   # openssl 3.x: x25519 private key DER = 16-byte header + 32-byte key
   #              x25519 public  key DER = 12-byte header + 32-byte key
-  local tmpkey="$TMPDIR/x25519.pem"
+  local tmpkey="$WORK_DIR/x25519.pem"
   openssl genpkey -algorithm x25519 -out "$tmpkey" 2>/dev/null || return 1
   local priv pub
   priv=$(openssl pkey -in "$tmpkey" -outform DER 2>/dev/null \
@@ -108,63 +119,65 @@ _keypair_via_openssl() {
   echo "Public key:  $pub"
 }
 
-_keypair_via_xray() {
-  local bin="${1:-}"
-  [[ -x "$bin" ]] || return 1
-  local out priv pub
-  out=$("$bin" x25519 2>/dev/null || true)
-  # Accept any format: "Private key: xxx", "privateKey: xxx", etc.
-  priv=$(echo "$out" | grep -i "private" | grep -oE '[A-Za-z0-9_-]{40,}' | head -1)
-  pub=$(echo "$out" | grep -i "public"  | grep -oE '[A-Za-z0-9_-]{40,}' | head -1)
-  [[ -n "$priv" && -n "$pub" ]] || return 1
-  echo "Private key: $priv"
-  echo "Public key:  $pub"
-}
-
-# ── generate secrets ────────────────────────────────────────────────────────────
+# ── generate secrets ───────────────────────────────────────────────────────────
 header "Generating secrets"
 
 KEYPAIR=""
-if KEYPAIR=$(_keypair_via_openssl 2>/dev/null) && [[ -n "$KEYPAIR" ]]; then
+# Prefer installed xray (its output is the canonical format for Reality configs)
+if KEYPAIR=$(_keypair_via_xray "/usr/local/bin/xray" 2>/dev/null) && [[ -n "$KEYPAIR" ]]; then
+  info "Generated X25519 keypair via xray x25519"
+elif KEYPAIR=$(_keypair_via_openssl 2>/dev/null) && [[ -n "$KEYPAIR" ]]; then
   info "Generated X25519 keypair via openssl"
-elif KEYPAIR=$(_keypair_via_xray "/usr/local/bin/xray" 2>/dev/null) && [[ -n "$KEYPAIR" ]]; then
-  info "Generated X25519 keypair via installed xray"
 else
-  # Last resort: download xray 1.8.24 (last version with stable x25519 output)
-  warn "openssl x25519 unavailable — downloading xray 1.8.24 for key generation"
+  # Last resort: download xray temporarily for key generation
+  warn "xray not installed and openssl x25519 unavailable — downloading xray for key generation"
   local_arc="Xray-linux-64.zip"
   [[ "$(uname -m)" == "aarch64" ]] && local_arc="Xray-linux-arm64-v8a.zip"
+  XRAY_VER=$(curl -fsSL --retry 3 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" \
+    | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+  [[ -n "$XRAY_VER" ]] || error "Failed to fetch latest xray version"
   curl -fsSL --retry 3 \
-    -o "$TMPDIR/xray.zip" \
-    "https://github.com/XTLS/Xray-core/releases/download/v1.8.24/${local_arc}"
-  unzip -q "$TMPDIR/xray.zip" xray -d "$TMPDIR/"
-  chmod +x "$TMPDIR/xray"
-  KEYPAIR=$(_keypair_via_xray "$TMPDIR/xray") || error "Failed to generate X25519 keypair"
+    -o "$WORK_DIR/xray.zip" \
+    "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VER}/${local_arc}"
+  unzip -q "$WORK_DIR/xray.zip" xray -d "$WORK_DIR/"
+  chmod +x "$WORK_DIR/xray"
+  KEYPAIR=$(_keypair_via_xray "$WORK_DIR/xray") || error "Failed to generate X25519 keypair"
+  info "Generated X25519 keypair via downloaded xray"
 fi
 
 PRIVATE_KEY=$(echo "$KEYPAIR" | awk '/Private key/{print $NF}')
 PUBLIC_KEY=$(echo "$KEYPAIR"  | awk '/Public key/{print $NF}')
 [[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" ]] || error "Failed to parse X25519 keypair"
+valid "$PRIVATE_KEY" "$B64_RE" || error "Generated private key has unexpected format: $PRIVATE_KEY"
+valid "$PUBLIC_KEY"  "$B64_RE" || error "Generated public key has unexpected format: $PUBLIC_KEY"
 
 VLESS_UUID=$(cat /proc/sys/kernel/random/uuid)
 SHORT_ID=$(openssl rand -hex 8)
 MTG_SNI="www.cloudflare.com"
 
-# Use mtg itself to generate the secret — it knows the exact format its parser accepts.
-# Requires Docker (available when --regenerate is run, or when called from install.sh step 3).
+# Use mtg itself to generate the secret so the format is guaranteed correct.
+# Docker must be available; falls back to manual construction on fresh installs.
 MTG_SECRET=""
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
   MTG_SECRET=$(docker run --rm nineseconds/mtg:2 generate-secret tls "$MTG_SNI" 2>/dev/null \
-    | tr -d '\r\n')
-  [[ -n "$MTG_SECRET" ]] && info "MTG secret generated via: mtg generate-secret tls $MTG_SNI"
+    | tr -d '\r\n' || true)
+  if valid "${MTG_SECRET:-}" "$MTG_RE"; then
+    info "MTG secret generated via: mtg generate-secret tls $MTG_SNI"
+  else
+    warn "mtg generate-secret returned unexpected output — falling back to manual construction"
+    MTG_SECRET=""
+  fi
 fi
 
 if [[ -z "${MTG_SECRET:-}" ]]; then
-  # Fallback: manually construct ee-secret (Docker not yet available — fresh install)
+  # Fallback for fresh installs where Docker is not yet available
   MTG_SNI_HEX=$(printf '%s' "$MTG_SNI" | od -An -tx1 | tr -d ' \n')
   MTG_SECRET="ee$(openssl rand -hex 16)${MTG_SNI_HEX}"
-  warn "MTG secret generated manually (Docker unavailable) — may need --regenerate after step 3"
+  warn "MTG secret generated manually (Docker unavailable) — run --regenerate after step 3 to use mtg's own generator"
 fi
+
+valid "$MTG_SECRET" "$MTG_RE" || error "MTG secret has invalid format: $MTG_SECRET"
+
 GRAFANA_PASS=$(openssl rand -base64 18 | tr -d '/+=\n' | head -c 20)
 
 info "UUID:        $VLESS_UUID"
