@@ -174,7 +174,9 @@ WantedBy=multi-user.target
 SVC_EOF
 
 systemctl daemon-reload
-systemctl enable --now xray
+systemctl enable xray
+# Always restart so new config/binary takes effect immediately
+systemctl restart xray
 
 # Give xray a moment to start (or fail), then report the real state.
 sleep 2

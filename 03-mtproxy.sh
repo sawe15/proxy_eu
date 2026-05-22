@@ -66,12 +66,18 @@ systemctl is-active --quiet docker || { systemctl start docker; sleep 2; }
 header "Deploying mtg container"
 
 if docker inspect "$MTG_CONTAINER" &>/dev/null; then
-  RUNNING_SECRET=$(docker inspect "$MTG_CONTAINER" \
-    --format '{{range .Args}}{{.}} {{end}}' 2>/dev/null | grep -oE 'ee[0-9a-f]+' || true)
-  if [[ "$RUNNING_SECRET" == "$PROXY_MTG_SECRET" ]]; then
-    info "Container '$MTG_CONTAINER' already running with correct secret — skipping"
+  CONTAINER_STATUS=$(docker inspect "$MTG_CONTAINER" --format '{{.State.Status}}' 2>/dev/null || true)
+  if [[ "$CONTAINER_STATUS" == "running" ]]; then
+    RUNNING_SECRET=$(docker inspect "$MTG_CONTAINER" \
+      --format '{{range .Args}}{{.}} {{end}}' 2>/dev/null | grep -oE 'ee[0-9a-f]+' || true)
+    if [[ "$RUNNING_SECRET" == "$PROXY_MTG_SECRET" ]]; then
+      info "Container '$MTG_CONTAINER' is running with correct secret — skipping"
+    else
+      warn "Secret changed — recreating container"
+      docker rm -f "$MTG_CONTAINER"
+    fi
   else
-    warn "Recreating container (secret changed)"
+    warn "Container '$MTG_CONTAINER' exists but is not running (status: ${CONTAINER_STATUS:-unknown}) — removing"
     docker rm -f "$MTG_CONTAINER"
   fi
 fi
@@ -90,8 +96,12 @@ if ! docker inspect "$MTG_CONTAINER" &>/dev/null; then
 fi
 
 sleep 2
-docker inspect "$MTG_CONTAINER" --format '{{.State.Status}}' | grep -q "running" \
-  || error "Container '$MTG_CONTAINER' failed to start (docker logs $MTG_CONTAINER)"
+FINAL_STATUS=$(docker inspect "$MTG_CONTAINER" --format '{{.State.Status}}' 2>/dev/null || true)
+if [[ "$FINAL_STATUS" != "running" ]]; then
+  warn "Container '$MTG_CONTAINER' failed to start. Last logs:"
+  docker logs --tail 30 "$MTG_CONTAINER" 2>&1 || true
+  error "Container '$MTG_CONTAINER' is not running (status: ${FINAL_STATUS:-missing})"
+fi
 
 # ── firewall ───────────────────────────────────────────────────────────────────
 header "Configuring firewall"
