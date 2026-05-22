@@ -56,7 +56,8 @@ bash "$SCRIPT_DIR/05-monitoring.sh"
 
 # ── summary ────────────────────────────────────────────────────────────────────
 [[ -f "$CONF_FILE" ]] && source "$CONF_FILE"
-SERVER_IP=$(curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
+SERVER_IP=$(curl -4 -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
+  || curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
   || hostname -I | awk '{print $1}')
 
 echo ""
