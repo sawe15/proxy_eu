@@ -69,7 +69,8 @@ if docker inspect "$MTG_CONTAINER" &>/dev/null; then
   CONTAINER_STATUS=$(docker inspect "$MTG_CONTAINER" --format '{{.State.Status}}' 2>/dev/null || true)
   if [[ "$CONTAINER_STATUS" == "running" ]]; then
     RUNNING_SECRET=$(docker inspect "$MTG_CONTAINER" \
-      --format '{{range .Args}}{{.}} {{end}}' 2>/dev/null | grep -oE 'ee[0-9a-f]+' || true)
+      --format '{{range .Args}}{{.}} {{end}}' 2>/dev/null \
+      | grep -oE '[A-Za-z0-9_-]{46,}|ee[0-9a-fA-F]{34,}' | head -1 || true)
     if [[ "$RUNNING_SECRET" == "$PROXY_MTG_SECRET" ]]; then
       info "Container '$MTG_CONTAINER' is running with correct secret — skipping"
     else
@@ -87,12 +88,14 @@ if ! docker inspect "$MTG_CONTAINER" &>/dev/null; then
   docker pull "$MTG_IMAGE"
 
   info "Starting container on port ${PROXY_MTG_PORT}..."
+  # simple-run takes two positional args: <bind-to> <secret>
+  # Omitting bind-to causes the secret to be consumed as bind-to → "expected <secret>"
   docker run -d \
     --name "$MTG_CONTAINER" \
     --restart unless-stopped \
     -p "${PROXY_MTG_PORT}:3128" \
     "$MTG_IMAGE" \
-    simple-run "${PROXY_MTG_SECRET}"
+    simple-run "0.0.0.0:3128" "${PROXY_MTG_SECRET}"
 fi
 
 sleep 2

@@ -41,7 +41,9 @@ valid() { [[ "${1:-}" =~ $2 ]]; }
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 B64_RE='^[A-Za-z0-9+/=_-]{40,}$'   # X25519 keys are ~43 base64url chars
 HEX8_RE='^[0-9a-f]{16}$'           # SHORT_ID: 8 bytes = 16 hex chars
-MTG_RE='^ee[0-9a-f]{34,}$'         # mtg TLS secret: ee + 16 bytes random + SNI hex
+# mtg v2 TLS secrets are base64url-encoded; first raw byte is 0xee → always '7' in base64url
+# Also accept legacy hex format (ee + hex) for existing proxy.conf compatibility
+MTG_RE='^(7[A-Za-z0-9_-]{46,}|ee[0-9a-fA-F]{34,})$'
 PASS_RE='^.{8,}$'
 
 if [[ -f "$CONF_FILE" ]]; then
@@ -156,27 +158,28 @@ SHORT_ID=$(openssl rand -hex 8)
 MTG_SNI="www.cloudflare.com"
 
 # Use mtg itself to generate the secret so the format is guaranteed correct.
-# Docker must be available; falls back to manual construction on fresh installs.
+# mtg v2 outputs base64url; fallback for fresh installs (Docker not yet available) uses hex.
 MTG_SECRET=""
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
   MTG_SECRET=$(docker run --rm nineseconds/mtg:2 generate-secret tls "$MTG_SNI" 2>/dev/null \
-    | tr -d '\r\n' || true)
+    | tr -d '[:space:]' || true)
   if valid "${MTG_SECRET:-}" "$MTG_RE"; then
     info "MTG secret generated via: mtg generate-secret tls $MTG_SNI"
   else
-    warn "mtg generate-secret returned unexpected output — falling back to manual construction"
+    warn "mtg generate-secret returned unexpected output ('${MTG_SECRET:-<empty>}') — falling back"
     MTG_SECRET=""
   fi
 fi
 
 if [[ -z "${MTG_SECRET:-}" ]]; then
-  # Fallback for fresh installs where Docker is not yet available
-  MTG_SNI_HEX=$(printf '%s' "$MTG_SNI" | od -An -tx1 | tr -d ' \n')
-  MTG_SECRET="ee$(openssl rand -hex 16)${MTG_SNI_HEX}"
+  # Fallback for fresh installs where Docker is not yet available.
+  # mtg v2 expects base64url: encode raw bytes (0xee + 16 random + SNI) as base64url.
+  MTG_SECRET=$({ printf '\xee'; openssl rand 16; printf '%s' "$MTG_SNI"; } \
+    | base64 | tr '+/' '-_' | tr -d '=\n')
   warn "MTG secret generated manually (Docker unavailable) — run --regenerate after step 3 to use mtg's own generator"
 fi
 
-valid "$MTG_SECRET" "$MTG_RE" || error "MTG secret has invalid format: $MTG_SECRET"
+valid "$MTG_SECRET" "$MTG_RE" || error "MTG secret has unexpected format: $MTG_SECRET"
 
 GRAFANA_PASS=$(openssl rand -base64 18 | tr -d '/+=\n' | head -c 20)
 
