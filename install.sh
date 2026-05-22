@@ -45,6 +45,20 @@ if [[ $REGENERATE -eq 1 ]]; then
   header "Redeploying mtg with new secret"
   bash "$SCRIPT_DIR/03-mtproxy.sh"
 
+  # Re-source conf so the freshly generated password is available
+  source "$CONF_FILE"
+
+  # Sync Grafana admin password with the new proxy.conf value
+  if command -v grafana-cli &>/dev/null && [[ -n "${PROXY_MONITORING_GRAFANA_PASSWORD:-}" ]]; then
+    header "Updating Grafana admin password"
+    if grafana-cli admin reset-admin-password "$PROXY_MONITORING_GRAFANA_PASSWORD" 2>/dev/null; then
+      systemctl restart grafana-server 2>/dev/null || true
+      info "Grafana password updated"
+    else
+      warn "grafana-cli failed — run manually: sudo grafana-cli admin reset-admin-password <pwd>"
+    fi
+  fi
+
   echo ""
   echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo -e "${BOLD}  Secrets rotated — new connection links${NC}"
